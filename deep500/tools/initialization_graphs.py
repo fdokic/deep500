@@ -4,106 +4,140 @@ from deep500.utils.onnx_interop.onnx_objects import AttributeType
 from deep500.utils.onnx_interop.onnx_objects import Operation
 
 
-def constant_of_shape(shape: List[int], value, name: str, dtype: AttributeType):
-    """Produces Graph producing constant output Tensor of given shape and value. name MUST match weight input"""
-    shape_tensor = onnx.helper.make_tensor("x", AttributeType.INTS.value, [len(shape)], shape)
-    const_tensor = onnx.helper.make_tensor("value", dtype.value, [1], [value])
+class InitializationGraph:
+    def __init__(self):
+        self.nodes = []
+        self.outputs = []
+        self.intermediates = []
 
-    const_node = onnx.helper.make_node(
-        'Constant',
-        inputs=[],
-        outputs=['x'],
-        value=shape_tensor,
-    )
+    def _get_intermediate(self):
+        var = "inter." + str(len(self.intermediates))
+        self.intermediates.append(var)
+        return var
 
-    upscale_node = onnx.helper.make_node(
-        'ConstantOfShape',
-        inputs=['x'],
-        outputs=['y'],
-        value=const_tensor,
-    )
+    def make_graph(self, name=''):
+        graph = onnx.helper.make_graph(nodes=self.nodes, name=name, inputs=[], outputs=self.outputs)
+        return graph
 
-    out = onnx.helper.make_tensor_value_info('y', elem_type=dtype.value, shape=shape)
-    graph = onnx.helper.make_graph(nodes=[const_node, upscale_node], name=name, inputs=[], outputs=[out])
+    # todo: implement get_update_binidings method
 
-    return graph
+    def add_node(self, init_type: str, *parameters):
+        supported_types = {
+            'ConstantOfShape': self._constant_of_shape,
+            'RandomUniform': self._random_uniform,
+            'RandomNormal': self._random_normal
+        }
 
+        func = supported_types[init_type]
+        func(*parameters)
+        return
 
-def random_uniform(shape: List[int], range: Tuple[float], name: str, dtype: AttributeType, seed=None):
-    """Produces Graph producing Uniform random output Tensor of given shape and value range.
-    name MUST match weight input"""
+    def _constant_of_shape(self, shape: List[int], value, name: str, dtype: AttributeType):
+        """adds nodes producing constant output Tensor of given shape and value. name MUST match weight name"""
+        if any(k.name == name for k in self.outputs):
+            raise Exception('need unique output name')
 
-    if seed is None:
-        upscale_node = onnx.helper.make_node(
-            'RandomUniform',
+        intermediate = self._get_intermediate()
+        shape_tensor = onnx.helper.make_tensor('shape', AttributeType.INTS.value, [len(shape)], shape)
+
+        const_node = onnx.helper.make_node(
+            'Constant',
             inputs=[],
-            outputs=['y'],
-            shape=shape,
-            high=range[1],
-            low=range[0]
-        )
-    else:
-        upscale_node = onnx.helper.make_node(
-            'RandomUniform',
-            inputs=[],
-            outputs=['y'],
-            shape=shape,
-            high=range[1],
-            low=range[0],
-            seed=seed
+            outputs=[intermediate],
+            value=shape_tensor,
+            name=name + '.node'
         )
 
-    out = onnx.helper.make_tensor_value_info('y', elem_type=dtype.value, shape=shape)
-    graph = onnx.helper.make_graph(nodes=[upscale_node], name=name, inputs=[], outputs=[out])
+        const_tensor = onnx.helper.make_tensor('value', dtype.value, [1], [value])
 
-    return graph
-
-
-def random_normal(shape: List[int], mean_std: Tuple[float], name: str, dtype: AttributeType, seed: Optional[float]):
-    """Produces Graph producing Normal random output Tensor of given shape with mean and std as given in args.
-    name MUST match weight input"""
-
-    if seed is None:
         upscale_node = onnx.helper.make_node(
-            'RandomNormal',
-            inputs=[],
-            outputs=['y'],
-            shape=shape,
-            scale=mean_std[1],
-            mean=mean_std[0]
-        )
-    else:
-        upscale_node = onnx.helper.make_node(
-            'RandomNormal',
-            inputs=[],
-            outputs=['y'],
-            shape=shape,
-            scale=mean_std[1],
-            mean=mean_std[0],
-            seed=seed
+            'ConstantOfShape',
+            inputs=[intermediate],
+            outputs=[name],
+            value=const_tensor,
+            name=name + '.node'
         )
 
-    out = onnx.helper.make_tensor_value_info('y', elem_type=dtype.value, shape=shape)
-    graph = onnx.helper.make_graph(nodes=[upscale_node], name=name, inputs=[], outputs=[out])
+        out = onnx.helper.make_tensor_value_info(name, elem_type=dtype.value, shape=shape)
+        self.nodes += [const_node, upscale_node]
+        self.outputs.append(out)
+        return
 
-    return graph
+    # todo: revise pytorch visitor concerning seed
+    def _random_uniform(self, shape: List[int], range: Tuple[float], name: str, dtype: AttributeType, seed=None):
+        """adds nodes producing Uniform random output Tensor of given shape and value range.
+        name MUST match weight name"""
+
+        if any(k.name == name for k in self.outputs):
+            raise Exception('need unique output name')
+
+        if seed is None:
+            upscale_node = onnx.helper.make_node(
+                'RandomUniform',
+                inputs=[],
+                outputs=[name],
+                shape=shape,
+                high=range[1],
+                low=range[0]
+            )
+        else:
+            upscale_node = onnx.helper.make_node(
+                'RandomUniform',
+                inputs=[],
+                outputs=[name],
+                shape=shape,
+                high=range[1],
+                low=range[0],
+                seed=seed
+            )
+
+        out = onnx.helper.make_tensor_value_info(name, elem_type=dtype.value, shape=shape)
+
+        self.nodes.append(upscale_node)
+        self.outputs.append(out)
+        return
 
 
-# g = constant_of_shape([2, 5, 5], 3.1415, 'input.0.weight', tensor_type=AttributeType.FLOAT)
-# g = random_uniform([2, 5, 5], 3.1415, 'input.0.weight', tensor_type=AttributeType.FLOAT)
+    def _random_normal(self, shape: List[int], mean_std: Tuple[float], name: str, dtype: AttributeType, seed=None):
+        """adds node producing Normal random output Tensor of given shape with mean and std as given in args.
+        name MUST match weight name"""
 
-g = random_normal([2, 5, 5], (0.0,1.0), 'input.0.weight', dtype=AttributeType.FLOAT, seed=69.0)
+        if any(k.name == name for k in self.outputs):
+            raise Exception('need unique output name')
 
-model = onnx.helper.make_model(g)
-onnx.checker.check_model(model)
-onnx.save_model(model, 'init.onnx')
+        if seed is None:
+            upscale_node = onnx.helper.make_node(
+                'RandomNormal',
+                inputs=[],
+                outputs=[name],
+                shape=shape,
+                scale=mean_std[1],
+                mean=mean_std[0]
+            )
+        else:
+            upscale_node = onnx.helper.make_node(
+                'RandomNormal',
+                inputs=[],
+                outputs=[name],
+                shape=shape,
+                scale=mean_std[1],
+                mean=mean_std[0],
+                seed=seed
+            )
 
+        out = onnx.helper.make_tensor_value_info(name, elem_type=dtype.value, shape=shape)
 
+        self.nodes.append(upscale_node)
+        self.outputs.append(out)
+        return
 
-from deep500.frameworks import pytorch as d5fw
-import deep500 as d5
-
-path = 'C:/Users/fdoki/PycharmProjects/my_d500/deep500/tools/init.onnx'
-init = d5.parser.load_and_parse_model(path)
-executorD = d5fw.from_model(init, device=d5.CPUDevice())
-executorD.inference(executorD.visitor.initializers)
+# # example code
+# g = InitializationGraph()
+#
+# g.add_node('ConstantOfShape', [1,2,3], 3.1415, "weight.3", AttributeType.FLOAT)
+# g.add_node('RandomNormal', [1,2,3], (0.0,1.0), "weight.1", AttributeType.FLOAT)
+# g.add_node('RandomUniform', [1,2,3], (5.0,0.0), 'weight.0', AttributeType.FLOAT)
+#
+# graph = g.make_graph()
+# model = onnx.helper.make_model(graph)
+# onnx.save(model,'test_init.onnx')
