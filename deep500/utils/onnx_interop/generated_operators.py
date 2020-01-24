@@ -2,163 +2,1669 @@
 from deep500.utils.onnx_interop.onnx_objects import OnnxAttribute, Operation
 
 
-class Sin(Operation):
+class LSTM(Operation):
     """
-Calculates the sine of the given input tensor, element-wise.
-    """
+Computes an one-layer LSTM. This operator is usually supported via some
+custom implementation such as CuDNN.
 
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Sin, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # Input tensor
-        self.i_input = self.input[0]
-        # The sine of the input tensor computed element-wise
-        self.o_output = self.output[0]
+Notations:
 
-    def accept(self, visitor, network):
-        super(Sin, self).accept(visitor, network)
-        visitor.visit_sin(self, network)
+`X` - input tensor
 
-    @classmethod
-    def create_op(cls, i_input: str, o_output: str):
-        attributes = {
-        }
-        return cls([i_input], [o_output], None, None, None, attributes, None)
+`i` - input gate
 
+`o` - output gate
 
-class Atan(Operation):
-    """
-Calculates the arctangent (inverse of tangent) of the given input tensor, element-wise.
-    """
+`f` - forget gate
 
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Atan, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # Input tensor
-        self.i_input = self.input[0]
-        # The arctangent of the input tensor computed element-wise
-        self.o_output = self.output[0]
+`c` - cell gate
 
-    def accept(self, visitor, network):
-        super(Atan, self).accept(visitor, network)
-        visitor.visit_atan(self, network)
+`t` - time step (t-1 means previous time step)
 
-    @classmethod
-    def create_op(cls, i_input: str, o_output: str):
-        attributes = {
-        }
-        return cls([i_input], [o_output], None, None, None, attributes, None)
+`W[iofc]` - W parameter weight matrix for input, output, forget, and cell gates
 
+`R[iofc]` - R recurrence weight matrix for input, output, forget, and cell gates
 
-class Asin(Operation):
-    """
-Calculates the arcsine (inverse of sine) of the given input tensor, element-wise.
-    """
+`Wb[iofc]` - W bias vectors for input, output, forget, and cell gates
 
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Asin, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # Input tensor
-        self.i_input = self.input[0]
-        # The arcsine of the input tensor computed element-wise
-        self.o_output = self.output[0]
+`Rb[iofc]` - R bias vectors for input, output, forget, and cell gates
 
-    def accept(self, visitor, network):
-        super(Asin, self).accept(visitor, network)
-        visitor.visit_asin(self, network)
+`P[iof]`  - P peephole weight vector for input, output, and forget gates
 
-    @classmethod
-    def create_op(cls, i_input: str, o_output: str):
-        attributes = {
-        }
-        return cls([i_input], [o_output], None, None, None, attributes, None)
+`WB[iofc]` - W parameter weight matrix for backward input, output, forget, and cell gates
 
+`RB[iofc]` - R recurrence weight matrix for backward input, output, forget, and cell gates
 
-class Acos(Operation):
-    """
-Calculates the arccosine (inverse of cosine) of the given input tensor, element-wise.
-    """
+`WBb[iofc]` - W bias vectors for backward input, output, forget, and cell gates
 
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Acos, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # Input tensor
-        self.i_input = self.input[0]
-        # The arccosine of the input tensor computed element-wise
-        self.o_output = self.output[0]
+`RBb[iofc]` - R bias vectors for backward input, output, forget, and cell gates
 
-    def accept(self, visitor, network):
-        super(Acos, self).accept(visitor, network)
-        visitor.visit_acos(self, network)
+`PB[iof]`  - P peephole weight vector for backward input, output, and forget gates
 
-    @classmethod
-    def create_op(cls, i_input: str, o_output: str):
-        attributes = {
-        }
-        return cls([i_input], [o_output], None, None, None, attributes, None)
+`H` - Hidden state
 
+`num_directions` - 2 if direction == bidirectional else 1
 
-class Unsqueeze(Operation):
-    """
-Insert single-dimensional entries to the shape of a tensor.
-Takes one required argument `axes`, a list of dimensions that will be inserted.
-Dimension indices in `axes` are as seen in the output tensor. For example:
-  Given a tensor such that tensor with shape [3, 4, 5], then
-  Unsqueeze(tensor, axes=[0, 4]) has shape [1, 3, 4, 5, 1]
+Activation functions:
+
+  Relu(x)                - max(0, x)
+
+  Tanh(x)                - (1 - e^{-2x})/(1 + e^{-2x})
+
+  Sigmoid(x)             - 1/(1 + e^{-x})
+
+  (NOTE: Below are optional)
+
+  Affine(x)              - alpha*x + beta
+
+  LeakyRelu(x)           - x if x >= 0 else alpha * x
+
+  ThresholdedRelu(x)     - x if x >= alpha else 0
+
+  ScaledTanh(x)          - alpha*Tanh(beta*x)
+
+  HardSigmoid(x)         - min(max(alpha*x + beta, 0), 1)
+
+  Elu(x)                 - x if x >= 0 else alpha*(e^x - 1)
+
+  Softsign(x)            - x/(1 + |x|)
+
+  Softplus(x)            - log(1 + e^x)
+
+Equations (Default: f=Sigmoid, g=Tanh, h=Tanh):
+
+  - it = f(Xt*(Wi^T) + Ht-1*(Ri^T) + Pi (.) Ct-1 + Wbi + Rbi)
+
+  - ft = f(Xt*(Wf^T) + Ht-1*(Rf^T) + Pf (.) Ct-1 + Wbf + Rbf)
+
+  - ct = g(Xt*(Wc^T) + Ht-1*(Rc^T) + Wbc + Rbc)
+
+  - Ct = ft (.) Ct-1 + it (.) ct
+
+  - ot = f(Xt*(Wo^T) + Ht-1*(Ro^T) + Po (.) Ct + Wbo + Rbo)
+
+  - Ht = ot (.) h(Ct)
+This operator has **optional** inputs/outputs. See [the doc](IR.md) for more details about the representation of optional arguments. An empty string may be used in the place of an actual argument's name to indicate a missing argument. Trailing optional arguments (those not followed by an argument that is present) may also be simply omitted.
     """
 
     def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Unsqueeze, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.axes = self.attributes.get('axes')
-        # Original tensor
-        self.i_data = self.input[0]
-        # Reshaped tensor with same data as input.
-        self.o_expanded = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Unsqueeze, self).accept(visitor, network)
-        visitor.visit_unsqueeze(self, network)
-
-    @classmethod
-    def create_op(cls, i_data: str, o_expanded: str, axes: OnnxAttribute):
-        attributes = {
-            'axes': axes,
-        }
-        return cls([i_data], [o_expanded], None, None, None, attributes, None)
-
-
-class TopK(Operation):
-    """
-Retrieve the top-K elements along a specified axis. Given an input tensor of
-shape [a_1, a_2, ..., a_n, r] and integer argument k, return two outputs:
-  -Value tensor of shape [a_1, a_2, ..., a_{axis-1}, k, a_{axis+1}, ... a_n]
-    which contains the values of the top k elements along the specified axis
-  -Index tensor of shape [a_1, a_2, ..., a_{axis-1}, k, a_{axis+1}, ... a_n] which
-   contains the indices of the top k elements (original indices from the input
-   tensor).
-
-Given two equivalent values, this operator uses the indices along the axis  as
- a tiebreaker. That is, the element with the lower index will appear first.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(TopK, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.axis = self.attributes.get('axis')
-        self.k = self.attributes.get('k')
-        # Tensor of shape [a_1, a_2, ..., a_n, r]
+        super(LSTM, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.activation_alpha = self.attributes.get('activation_alpha')
+        self.activation_beta = self.attributes.get('activation_beta')
+        self.activations = self.attributes.get('activations')
+        self.clip = self.attributes.get('clip')
+        self.direction = self.attributes.get('direction')
+        self.hidden_size = self.attributes.get('hidden_size')
+        self.input_forget = self.attributes.get('input_forget')
+        # The input sequences packed (and potentially padded) into one 3-D tensor with the shape of `[seq_length, batch_size, input_size]`.
         self.i_X = self.input[0]
-        # Tensor of shape [a_1, a_2, ..., a_{axis-1}, k, a_{axis+1}, ... a_n] containing top K values from the input tensor
-        self.o_Values = self.output[0]
-        # Tensor of shape [a_1, a_2, ..., a_{axis-1}, k, a_{axis+1}, ... a_n] containing the corresponding input tensor indices for the top K values.
-        self.o_Indices = self.output[1]
+        # The weight tensor for the gates. Concatenation of `W[iofc]` and `WB[iofc]` (if bidirectional) along dimension 0. The tensor has shape `[num_directions, 4*hidden_size, input_size]`.
+        self.i_W = self.input[1]
+        # The recurrence weight tensor. Concatenation of `R[iofc]` and `RB[iofc]` (if bidirectional) along dimension 0. This tensor has shape `[num_directions, 4*hidden_size, hidden_size]`.
+        self.i_R = self.input[2]
+        # The bias tensor for input gate. Concatenation of `[Wb[iofc], Rb[iofc]]`, and `[WBb[iofc], RBb[iofc]]` (if bidirectional) along dimension 0. This tensor has shape `[num_directions, 8*hidden_size]`. Optional: If not specified - assumed to be 0.
+        # OPTIONAL
+        self.i_B = None if len(self.input) < 4 else self.input[3]
+        # Optional tensor specifying lengths of the sequences in a batch. If not specified - assumed all sequences in the batch to have length `seq_length`. It has shape `[batch_size]`.
+        # OPTIONAL
+        self.i_sequence_lens = None if len(self.input) < 5 else self.input[4]
+        # Optional initial value of the hidden. If not specified - assumed to be 0. It has shape `[num_directions, batch_size, hidden_size]`.
+        # OPTIONAL
+        self.i_initial_h = None if len(self.input) < 6 else self.input[5]
+        # Optional initial value of the cell. If not specified - assumed to be 0. It has shape `[num_directions, batch_size, hidden_size]`.
+        # OPTIONAL
+        self.i_initial_c = None if len(self.input) < 7 else self.input[6]
+        # The weight tensor for peepholes. Concatenation of `P[iof]` and `PB[iof]` (if bidirectional) along dimension 0. It has shape `[num_directions, 3*hidde_size]`. Optional: If not specified - assumed to be 0.
+        # OPTIONAL
+        self.i_P = None if len(self.input) < 8 else self.input[7]
+        # A tensor that concats all the intermediate output values of the hidden. It has shape `[seq_length, num_directions, batch_size, hidden_size]`. 
+        # OPTIONAL
+        self.o_Y = None if len(self.output) < 1 else self.output[0]
+        # The last output value of the hidden. It has shape `[num_directions, batch_size, hidden_size]`.
+        # OPTIONAL
+        self.o_Y_h = None if len(self.output) < 2 else self.output[1]
+        # The last output value of the cell. It has shape `[num_directions, batch_size, hidden_size]`.
+        # OPTIONAL
+        self.o_Y_c = None if len(self.output) < 3 else self.output[2]
 
     def accept(self, visitor, network):
-        super(TopK, self).accept(visitor, network)
-        visitor.visit_topk(self, network)
+        super(LSTM, self).accept(visitor, network)
+        visitor.visit_lstm(self, network)
 
     @classmethod
-    def create_op(cls, i_X: str, o_Values: str, o_Indices: str, axis: OnnxAttribute, k: OnnxAttribute):
+    def create_op(cls, i_X: str, i_W: str, i_R: str, i_B: str, i_sequence_lens: str, i_initial_h: str, i_initial_c: str, i_P: str, o_Y: str, o_Y_h: str, o_Y_c: str, activation_alpha: OnnxAttribute, activation_beta: OnnxAttribute, activations: OnnxAttribute, clip: OnnxAttribute, direction: OnnxAttribute, hidden_size: OnnxAttribute, input_forget: OnnxAttribute):
+        attributes = {
+            'activation_alpha': activation_alpha,
+            'activation_beta': activation_beta,
+            'activations': activations,
+            'clip': clip,
+            'direction': direction,
+            'hidden_size': hidden_size,
+            'input_forget': input_forget,
+        }
+        return cls([i_X, i_W, i_R, i_B, i_sequence_lens, i_initial_h, i_initial_c, i_P], [o_Y, o_Y_h, o_Y_c], None, None, None, attributes, None)
+
+
+class Identity(Operation):
+    """Identity operator    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Identity, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_input = self.input[0]
+        # Tensor to copy input into.
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Identity, self).accept(visitor, network)
+        visitor.visit_identity(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, o_output: str):
+        attributes = {
+        }
+        return cls([i_input], [o_output], None, None, None, attributes, None)
+
+
+class Abs(Operation):
+    """
+Absolute takes one input data (Tensor<T>) and produces one output data
+(Tensor<T>) where the absolute is, y = abs(x), is applied to
+the tensor elementwise.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Abs, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_X = self.input[0]
+        # Output tensor
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Abs, self).accept(visitor, network)
+        visitor.visit_abs(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str):
+        attributes = {
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class BatchNormalization(Operation):
+    """
+Carries out batch normalization as described in the paper
+https://arxiv.org/abs/1502.03167. Depending on the mode it is being run,
+there are multiple cases for the number of outputs, which we list below:
+
+Output case #1: Y, mean, var, saved_mean, saved_var (training mode)
+Output case #2: Y (test mode)
+
+For previous (depreciated) non-spatial cases, implementors are suggested
+to flatten the input shape to (N x C*D1*D2 ..*Dn) before a BatchNormalization Op.
+This operator has **optional** inputs/outputs. See [the doc](IR.md) for more details about the representation of optional arguments. An empty string may be used in the place of an actual argument's name to indicate a missing argument. Trailing optional arguments (those not followed by an argument that is present) may also be simply omitted.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(BatchNormalization, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.epsilon = self.attributes.get('epsilon')
+        self.momentum = self.attributes.get('momentum')
+        # Input data tensor from the previous operator; dimensions are in the form of (N x C x D1 x D2 ... Dn), where N is the batch size, C is the number of channels. Statistics are computed for every channel of C over N and D1 to Dn dimensions. For image data, input dimensions become (N x C x H x W). The op also accepts single dimension input of size N in which case C is assumed to be 1
+        self.i_X = self.input[0]
+        # Scale tensor of shape (C).
+        self.i_scale = self.input[1]
+        # Bias tensor of shape (C).
+        self.i_B = self.input[2]
+        # running (training) or estimated (testing) mean tensor of shape (C).
+        self.i_mean = self.input[3]
+        # running (training) or estimated (testing) variance tensor of shape (C).
+        self.i_var = self.input[4]
+        # The output tensor of the same shape as X
+        self.o_Y = self.output[0]
+        # The running mean after the BatchNormalization operator.
+        # OPTIONAL
+        self.o_mean = None if len(self.output) < 2 else self.output[1]
+        # The running variance after the BatchNormalization operator.
+        # OPTIONAL
+        self.o_var = None if len(self.output) < 3 else self.output[2]
+        # Saved mean used during training to speed up gradient computation.
+        # OPTIONAL
+        self.o_saved_mean = None if len(self.output) < 4 else self.output[3]
+        # Saved variance used during training to speed up gradient computation.
+        # OPTIONAL
+        self.o_saved_var = None if len(self.output) < 5 else self.output[4]
+
+    def accept(self, visitor, network):
+        super(BatchNormalization, self).accept(visitor, network)
+        visitor.visit_batchnormalization(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, i_scale: str, i_B: str, i_mean: str, i_var: str, o_Y: str, o_mean: str, o_var: str, o_saved_mean: str, o_saved_var: str, epsilon: OnnxAttribute, momentum: OnnxAttribute):
+        attributes = {
+            'epsilon': epsilon,
+            'momentum': momentum,
+        }
+        return cls([i_X, i_scale, i_B, i_mean, i_var], [o_Y, o_mean, o_var, o_saved_mean, o_saved_var], None, None, None, attributes, None)
+
+
+class Mean(Operation):
+    """
+Element-wise mean of each of the input tensors (with Numpy-style broadcasting support).
+All inputs and outputs must have the same data type.
+This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Mean, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # List of tensors for mean.
+        # input is variadic [1,infty) just use self.input to access whole list
+        # Output tensor.
+        self.o_mean = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Mean, self).accept(visitor, network)
+        visitor.visit_mean(self, network)
+
+    @classmethod
+    def create_op(cls, i_data_0: str, o_mean: str):
+        attributes = {
+        }
+        return cls([i_data_0], [o_mean], None, None, None, attributes, None)
+
+
+class Add(Operation):
+    """
+Performs element-wise binary addition (with Numpy-style broadcasting support).
+
+This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Add, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # First operand.
+        self.i_A = self.input[0]
+        # Second operand.
+        self.i_B = self.input[1]
+        # Result, has same element type as two inputs
+        self.o_C = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Add, self).accept(visitor, network)
+        visitor.visit_add(self, network)
+
+    @classmethod
+    def create_op(cls, i_A: str, i_B: str, o_C: str):
+        attributes = {
+        }
+        return cls([i_A, i_B], [o_C], None, None, None, attributes, None)
+
+
+class GlobalMaxPool(Operation):
+    """
+ GlobalMaxPool consumes an input tensor X and applies max pooling across
+ the values in the same channel. This is equivalent to MaxPool with kernel size
+ equal to the spatial dimension of input tensor.    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(GlobalMaxPool, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input data tensor from the previous operator; dimensions for image case are (N x C x H x W), where N is the batch size, C is the number of channels, and H and W are the height and the width of the data. For non image case, the dimensions are in the form of (N x C x D1 x D2 ... Dn), where N is the batch size.
+        self.i_X = self.input[0]
+        # Output data tensor from pooling across the input tensor. The output tensor has the same rank as the input. The first two dimensions of output shape are the same as the input (N x C), while the other dimensions are all 1.
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(GlobalMaxPool, self).accept(visitor, network)
+        visitor.visit_globalmaxpool(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str):
+        attributes = {
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class Cast(Operation):
+    """
+The operator casts the elements of a given input tensor to a data type
+specified by the 'to' argument and returns an output tensor of the same size in
+the converted type. The 'to' argument must be one of the data types specified
+in the 'DataType' enum field in the TensorProto message.
+
+Casting from string tensor in plain (e.g., "3.14" and "1000") and scientific numeric representations
+(e.g., "1e-5" and "1E8") to float types is supported. For example, converting string "100.5" to an integer may
+result 100. There are some string literals reserved for special floating-point values;
+"+INF" (and "INF"), "-INF", and "NaN" are positive infinity, negative infinity, and not-a-number, respectively.
+Any string which can exactly match "+INF" in a case-insensitive way would be mapped to positive infinite. Similarly,
+this case-insensitive rule is applied to "INF" and "NaN". When casting from numeric tensors
+to string tensors, plain floating-point representation (such as "314.15926") would be used. 
+Converting non-numerical-literal string such as "Hello World!" is an undefined behavior. Cases 
+of converting string representing floating-point arithmetic value, such as "2.718", to INT is an undefined behavior.
+
+Conversion from a numerical type to any numerical type is always allowed.
+User must be aware of precision loss and value change caused by range difference between two types.
+For example, a 64-bit float 3.1415926459 may be round to a 32-bit float 3.141592. Similarly, converting
+an integer 36 to Boolean may produce 1 because we truncate bits which can't be stored in the targeted type.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Cast, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.to = self.attributes.get('to')
+        # Input tensor to be cast.
+        self.i_input = self.input[0]
+        # Output tensor with the same shape as input with type specified by the 'to' argument
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Cast, self).accept(visitor, network)
+        visitor.visit_cast(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, o_output: str, to: OnnxAttribute):
+        attributes = {
+            'to': to,
+        }
+        return cls([i_input], [o_output], None, None, None, attributes, None)
+
+
+class AveragePool(Operation):
+    """
+ AveragePool consumes an input tensor X and applies average pooling across
+ the tensor according to kernel sizes, stride sizes, and pad lengths.
+ average pooling consisting of computing the average on all values of a
+ subset of the input tensor according to the kernel size and downsampling the
+ data into the output tensor Y for further processing. The output spatial shape will be following:
+ ```
+ output_spatial_shape[i] = floor((input_spatial_shape[i] + pad_shape[i] - kernel_spatial_shape[i]) / strides_spatial_shape[i] + 1)
+ ```
+ or
+ ```
+ output_spatial_shape[i] = ceil((input_spatial_shape[i] + pad_shape[i] - kernel_spatial_shape[i]) / strides_spatial_shape[i] + 1)
+ ```
+ if ceil_mode is enabled
+
+ ```
+ * pad_shape[i] is sum of pads along axis i
+ ```
+
+ `auto_pad` is a DEPRECATED attribute. If you are using them currently, the output spatial shape will be following:
+ ```
+ VALID: output_spatial_shape[i] = ceil((input_spatial_shape[i] - kernel_spatial_shape[i] + 1) / strides_spatial_shape[i])
+ SAME_UPPER or SAME_LOWER: output_spatial_shape[i] = ceil(input_spatial_shape[i] / strides_spatial_shape[i])
+ ```
+ And pad shape will be following if `SAME_UPPER` or `SAME_LOWER`:
+ ```
+ pad_shape[i] = (output_spatial_shape[i] - 1) * strides_spatial_shape[i] + kernel_spatial_shape[i] - input_spatial_shape[i]
+ ```
+ The output of each pooling window is divided by the number of elements (exclude pad when attribute count_include_pad is zero).
+     """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(AveragePool, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.auto_pad = self.attributes.get('auto_pad')
+        self.ceil_mode = self.attributes.get('ceil_mode')
+        self.count_include_pad = self.attributes.get('count_include_pad')
+        self.kernel_shape = self.attributes.get('kernel_shape')
+        self.pads = self.attributes.get('pads')
+        self.strides = self.attributes.get('strides')
+        # Input data tensor from the previous operator; dimensions for image case are (N x C x H x W), where N is the batch size, C is the number of channels, and H and W are the height and the width of the data. For non image case, the dimensions are in the form of (N x C x D1 x D2 ... Dn), where N is the batch size. Optionally, if dimension denotation is in effect, the operation expects the input data tensor to arrive with the dimension denotation of [DATA_BATCH, DATA_CHANNEL, DATA_FEATURE, DATA_FEATURE ...].
+        self.i_X = self.input[0]
+        # Output data tensor from average or max pooling across the input tensor. Dimensions will vary based on various kernel, stride, and pad sizes. Floor value of the dimension is used
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(AveragePool, self).accept(visitor, network)
+        visitor.visit_averagepool(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, auto_pad: OnnxAttribute, ceil_mode: OnnxAttribute, count_include_pad: OnnxAttribute, kernel_shape: OnnxAttribute, pads: OnnxAttribute, strides: OnnxAttribute):
+        attributes = {
+            'auto_pad': auto_pad,
+            'ceil_mode': ceil_mode,
+            'count_include_pad': count_include_pad,
+            'kernel_shape': kernel_shape,
+            'pads': pads,
+            'strides': strides,
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class And(Operation):
+    """
+Returns the tensor resulted from performing the `and` logical operation
+elementwise on the input tensors `A` and `B` (with Numpy-style broadcasting support).
+
+This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(And, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # First input operand for the logical operator.
+        self.i_A = self.input[0]
+        # Second input operand for the logical operator.
+        self.i_B = self.input[1]
+        # Result tensor.
+        self.o_C = self.output[0]
+
+    def accept(self, visitor, network):
+        super(And, self).accept(visitor, network)
+        visitor.visit_and(self, network)
+
+    @classmethod
+    def create_op(cls, i_A: str, i_B: str, o_C: str):
+        attributes = {
+        }
+        return cls([i_A, i_B], [o_C], None, None, None, attributes, None)
+
+
+class LRN(Operation):
+    """
+Local Response Normalization proposed in the [AlexNet paper](https://papers.nips.cc/paper/4824-imagenet-classification-with-deep-convolutional-neural-networks.pdf).
+It normalizes over local input regions.
+The local region is defined across the channels. For an element X[n, c, d1, ..., dk] in a tensor
+of shape (N x C x D1 x D2, ..., Dk), its region is
+{X[n, i, d1, ..., dk] | max(0, c - floor((size - 1) / 2)) <= i <= min(C - 1, c + ceil((size - 1) / 2))}.
+
+square_sum[n, c, d1, ..., dk] = sum(X[n, i, d1, ..., dk] ^ 2),
+where max(0, c - floor((size - 1) / 2)) <= i <= min(C - 1, c + ceil((size - 1) / 2)).
+
+Y[n, c, d1, ..., dk] = X[n, c, d1, ..., dk] / (bias + alpha / size * square_sum[n, c, d1, ..., dk] ) ^ beta
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(LRN, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.alpha = self.attributes.get('alpha')
+        self.beta = self.attributes.get('beta')
+        self.bias = self.attributes.get('bias')
+        self.size = self.attributes.get('size')
+        # Input data tensor from the previous operator; dimensions for image case are (N x C x H x W), where N is the batch size, C is the number of channels, and H and W are the height and the width of the data. For non image case, the dimensions are in the form of (N x C x D1 x D2 ... Dn), where N is the batch size. Optionally, if dimension denotation is in effect, the operation expects the input data tensor to arrive with the dimension denotation of [DATA_BATCH, DATA_CHANNEL, DATA_FEATURE, DATA_FEATURE ...].
+        self.i_X = self.input[0]
+        # Output tensor, which has the shape and type as input tensor
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(LRN, self).accept(visitor, network)
+        visitor.visit_lrn(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, alpha: OnnxAttribute, beta: OnnxAttribute, bias: OnnxAttribute, size: OnnxAttribute):
+        attributes = {
+            'alpha': alpha,
+            'beta': beta,
+            'bias': bias,
+            'size': size,
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class ArgMax(Operation):
+    """
+Computes the indices of the max elements of the input tensor's element along the 
+provided axis. The resulted tensor has the same rank as the input if keepdims equal 1.
+If keepdims equal 0, then the resulted tensor have the reduced dimension pruned. 
+The type of the output tensor is integer.    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(ArgMax, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axis = self.attributes.get('axis')
+        self.keepdims = self.attributes.get('keepdims')
+        # An input tensor.
+        self.i_data = self.input[0]
+        # Reduced output tensor with integer data type.
+        self.o_reduced = self.output[0]
+
+    def accept(self, visitor, network):
+        super(ArgMax, self).accept(visitor, network)
+        visitor.visit_argmax(self, network)
+
+    @classmethod
+    def create_op(cls, i_data: str, o_reduced: str, axis: OnnxAttribute, keepdims: OnnxAttribute):
         attributes = {
             'axis': axis,
-            'k': k,
+            'keepdims': keepdims,
         }
-        return cls([i_X], [o_Values, o_Indices], None, None, None, attributes, None)
+        return cls([i_data], [o_reduced], None, None, None, attributes, None)
+
+
+class Resize(Operation):
+    """
+Resize the input tensor. In general, it calculates every value in the output tensor as a weighted average of neighborhood (a.k.a. sampling locations) in the input tensor.
+Each dimension value of the output tensor is:
+  output_dimension = floor(input_dimension * (roi_end - roi_start) * scale) if input \"sizes\" is not specified.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Resize, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.coordinate_transformation_mode = self.attributes.get('coordinate_transformation_mode')
+        self.cubic_coeff_a = self.attributes.get('cubic_coeff_a')
+        self.exclude_outside = self.attributes.get('exclude_outside')
+        self.extrapolation_value = self.attributes.get('extrapolation_value')
+        self.mode = self.attributes.get('mode')
+        self.nearest_mode = self.attributes.get('nearest_mode')
+        # N-D tensor
+        self.i_X = self.input[0]
+        # 1-D tensor given as [start1, ..., startN, end1, ..., endN], where N is the rank of X. The RoIs' coordinates are normalized in the coordinate system of the input image. It only takes effect when coordinate_transformation_mode is "tf_crop_and_resize"
+        self.i_roi = self.input[1]
+        # The scale array along each dimension. It takes value greater than 0. If it's less than 1, it's sampling down, otherwise, it's upsampling. The number of elements of 'scales' should be the same as the rank of input 'X'. Only one of 'scales' and 'sizes' can be specified. If 'size' is needed, the user can use an empty string as the name of 'scales' in this operator's input list.
+        self.i_scales = self.input[2]
+        # The size of the output tensor. The number of elements of 'sizes' should be the same as the rank of input 'X'. Only one of 'scales' and 'sizes' can be specified.
+        # OPTIONAL
+        self.i_sizes = None if len(self.input) < 4 else self.input[3]
+        # N-D tensor after resizing
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Resize, self).accept(visitor, network)
+        visitor.visit_resize(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, i_roi: str, i_scales: str, i_sizes: str, o_Y: str, coordinate_transformation_mode: OnnxAttribute, cubic_coeff_a: OnnxAttribute, exclude_outside: OnnxAttribute, extrapolation_value: OnnxAttribute, mode: OnnxAttribute, nearest_mode: OnnxAttribute):
+        attributes = {
+            'coordinate_transformation_mode': coordinate_transformation_mode,
+            'cubic_coeff_a': cubic_coeff_a,
+            'exclude_outside': exclude_outside,
+            'extrapolation_value': extrapolation_value,
+            'mode': mode,
+            'nearest_mode': nearest_mode,
+        }
+        return cls([i_X, i_roi, i_scales, i_sizes], [o_Y], None, None, None, attributes, None)
+
+
+class Expand(Operation):
+    """
+Broadcast the input tensor following the given shape and the broadcast rule.
+The broadcast rule is similar to numpy.array(input) * numpy.ones(shape):
+Dimensions are right alignment;
+Two corresponding dimension must have the same value, or one of them is equal to 1.
+Also, this operator is similar to numpy.broadcast_to(input, shape),
+but the major difference is numpy.broadcast_to() does not allow shape to be smaller than input.size().
+It is possible that the output.shape is not equal to shape, when some dimensions in shape is equal to 1,
+or the shape.ndim < input.shape.ndim.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Expand, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_input = self.input[0]
+        # A 1-D tensor indicates the shape you want to expand to, following the broadcast rule
+        self.i_shape = self.input[1]
+        # Output tensor
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Expand, self).accept(visitor, network)
+        visitor.visit_expand(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, i_shape: str, o_output: str):
+        attributes = {
+        }
+        return cls([i_input, i_shape], [o_output], None, None, None, attributes, None)
+
+
+class Neg(Operation):
+    """
+Neg takes one input data (Tensor<T>) and produces one output data
+(Tensor<T>) where each element flipped sign, y = -x, is applied to
+the tensor elementwise.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Neg, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_X = self.input[0]
+        # Output tensor
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Neg, self).accept(visitor, network)
+        visitor.visit_neg(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str):
+        attributes = {
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class Mul(Operation):
+    """
+Performs element-wise binary multiplication (with Numpy-style broadcasting support).
+
+This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Mul, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # First operand.
+        self.i_A = self.input[0]
+        # Second operand.
+        self.i_B = self.input[1]
+        # Result, has same element type as two inputs
+        self.o_C = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Mul, self).accept(visitor, network)
+        visitor.visit_mul(self, network)
+
+    @classmethod
+    def create_op(cls, i_A: str, i_B: str, o_C: str):
+        attributes = {
+        }
+        return cls([i_A, i_B], [o_C], None, None, None, attributes, None)
+
+
+class ArgMin(Operation):
+    """
+Computes the indices of the min elements of the input tensor's element along the 
+provided axis. The resulted tensor has the same rank as the input if keepdims equal 1.
+If keepdims equal 0, then the resulted tensor have the reduced dimension pruned. 
+The type of the output tensor is integer.    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(ArgMin, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axis = self.attributes.get('axis')
+        self.keepdims = self.attributes.get('keepdims')
+        # An input tensor.
+        self.i_data = self.input[0]
+        # Reduced output tensor with integer data type.
+        self.o_reduced = self.output[0]
+
+    def accept(self, visitor, network):
+        super(ArgMin, self).accept(visitor, network)
+        visitor.visit_argmin(self, network)
+
+    @classmethod
+    def create_op(cls, i_data: str, o_reduced: str, axis: OnnxAttribute, keepdims: OnnxAttribute):
+        attributes = {
+            'axis': axis,
+            'keepdims': keepdims,
+        }
+        return cls([i_data], [o_reduced], None, None, None, attributes, None)
+
+
+class CastMap(Operation):
+    """
+    Converts a map to a tensor.<br>The map key must be an int64 and the values will be ordered
+    in ascending order based on this key.<br>The operator supports dense packing or sparse packing.
+    If using sparse packing, the key cannot exceed the max_map-1 value.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(CastMap, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.cast_to = self.attributes.get('cast_to')
+        self.map_form = self.attributes.get('map_form')
+        self.max_map = self.attributes.get('max_map')
+        # The input map that is to be cast to a tensor
+        self.i_X = self.input[0]
+        # A tensor representing the same data as the input map, ordered by their keys
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(CastMap, self).accept(visitor, network)
+        visitor.visit_castmap(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, cast_to: OnnxAttribute, map_form: OnnxAttribute, max_map: OnnxAttribute):
+        attributes = {
+            'cast_to': cast_to,
+            'map_form': map_form,
+            'max_map': max_map,
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class Exp(Operation):
+    """
+Calculates the exponential of the given input tensor, element-wise.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Exp, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_input = self.input[0]
+        # The exponential of the input tensor computed element-wise
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Exp, self).accept(visitor, network)
+        visitor.visit_exp(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, o_output: str):
+        attributes = {
+        }
+        return cls([i_input], [o_output], None, None, None, attributes, None)
+
+
+class Div(Operation):
+    """
+Performs element-wise binary division (with Numpy-style broadcasting support).
+
+This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Div, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # First operand.
+        self.i_A = self.input[0]
+        # Second operand.
+        self.i_B = self.input[1]
+        # Result, has same element type as two inputs
+        self.o_C = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Div, self).accept(visitor, network)
+        visitor.visit_div(self, network)
+
+    @classmethod
+    def create_op(cls, i_A: str, i_B: str, o_C: str):
+        attributes = {
+        }
+        return cls([i_A, i_B], [o_C], None, None, None, attributes, None)
+
+
+class ReverseSequence(Operation):
+    """
+Reverse batch of sequences having different lengths specified by `sequence_lens`.
+
+For each slice i iterating on batch axis, the operator reverses the first sequence_lens[i] elements on time axis,
+and copies elements whose index's beyond sequence_lens[i] to the output. So the output slice i contains reversed
+sequences on the first sequence_lens[i] elements, then have original values copied for the other elements.
+
+Example 1:
+  input = [[0.0, 4.0, 8.0,  12.0],
+           [1.0, 5.0, 9.0,  13.0],
+           [2.0, 6.0, 10.0, 14.0],
+           [3.0, 7.0, 11.0, 15.0]]
+  sequence_lens = [4, 3, 2, 1]
+  time_axis = 0
+  batch_axis = 1
+
+  output = [[3.0, 6.0, 9.0,  12.0],
+            [2.0, 5.0, 8.0,  13.0],
+            [1.0, 4.0, 10.0, 14.0],
+            [0.0, 7.0, 11.0, 15.0]]
+
+Example 2:
+  input = [[0.0,  1.0,  2.0,  3.0 ],
+           [4.0,  5.0,  6.0,  7.0 ],
+           [8.0,  9.0,  10.0, 11.0],
+           [12.0, 13.0, 14.0, 15.0]]
+  sequence_lens = [1, 2, 3, 4]
+  time_axis = 1
+  batch_axis = 0
+
+  output = [[0.0,  1.0,  2.0,  3.0 ],
+            [5.0,  4.0,  6.0,  7.0 ],
+            [10.0, 9.0,  8.0,  11.0],
+            [15.0, 14.0, 13.0, 12.0]]
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(ReverseSequence, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.batch_axis = self.attributes.get('batch_axis')
+        self.time_axis = self.attributes.get('time_axis')
+        # Tensor of rank r >= 2.
+        self.i_input = self.input[0]
+        # Tensor specifying lengths of the sequences in a batch. It has shape `[batch_size]`.
+        self.i_sequence_lens = self.input[1]
+        # Tensor with same shape of input.
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(ReverseSequence, self).accept(visitor, network)
+        visitor.visit_reversesequence(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, i_sequence_lens: str, o_Y: str, batch_axis: OnnxAttribute, time_axis: OnnxAttribute):
+        attributes = {
+            'batch_axis': batch_axis,
+            'time_axis': time_axis,
+        }
+        return cls([i_input, i_sequence_lens], [o_Y], None, None, None, attributes, None)
+
+
+class Ceil(Operation):
+    """
+Ceil takes one input data (Tensor<T>) and produces one output data
+(Tensor<T>) where the ceil is, y = ceil(x), is applied to
+the tensor elementwise.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Ceil, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_X = self.input[0]
+        # Output tensor
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Ceil, self).accept(visitor, network)
+        visitor.visit_ceil(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str):
+        attributes = {
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class DepthToSpace(Operation):
+    """DepthToSpace rearranges (permutes) data from depth into blocks of spatial data.
+This is the reverse transformation of SpaceToDepth. More specifically, this op outputs a copy of
+the input tensor where values from the depth dimension are moved in spatial blocks to the height
+and width dimensions. By default, `mode` = `DCR`.
+In the DCR mode, elements along the depth dimension from the input tensor are rearranged in the
+following order: depth, column, and then row. The output y is computed from the input x as below:
+
+b, c, h, w = x.shape
+
+tmp = np.reshape(x, [b, blocksize, blocksize, c // (blocksize**2), h, w])
+
+tmp = np.transpose(tmp, [0, 3, 4, 1, 5, 2])
+
+y = np.reshape(tmp, [b, c // (blocksize**2), h * blocksize, w * blocksize])
+
+
+In the CRD mode, elements along the depth dimension from the input tensor are rearranged in the
+following order: column, row, and the depth. The output y is computed from the input x as below:
+
+b, c, h, w = x.shape
+
+tmp = np.reshape(x, [b, c // (blocksize ** 2), blocksize, blocksize, h, w])
+
+tmp = np.transpose(tmp, [0, 1, 4, 2, 5, 3])
+
+y = np.reshape(tmp, [b, c // (blocksize ** 2), h * blocksize, w * blocksize])
+
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(DepthToSpace, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.blocksize = self.attributes.get('blocksize')
+        self.mode = self.attributes.get('mode')
+        # Input tensor of [N,C,H,W], where N is the batch axis, C is the channel or depth, H is the height and W is the width.
+        self.i_input = self.input[0]
+        # Output tensor of [N, C/(blocksize * blocksize), H * blocksize, W * blocksize].
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(DepthToSpace, self).accept(visitor, network)
+        visitor.visit_depthtospace(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, o_output: str, blocksize: OnnxAttribute, mode: OnnxAttribute):
+        attributes = {
+            'blocksize': blocksize,
+            'mode': mode,
+        }
+        return cls([i_input], [o_output], None, None, None, attributes, None)
+
+
+class Clip(Operation):
+    """
+Clip operator limits the given input within an interval. The interval is
+specified by the inputs 'min' and 'max'. They default to
+numeric_limits::lowest() and numeric_limits::max(), respectively.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Clip, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor whose elements to be clipped
+        self.i_input = self.input[0]
+        # Minimum value, under which element is replaced by min. It must be a scalar(tensor of empty shape).
+        # OPTIONAL
+        self.i_min = None if len(self.input) < 2 else self.input[1]
+        # Maximum value, above which element is replaced by max. It must be a scalar(tensor of empty shape).
+        # OPTIONAL
+        self.i_max = None if len(self.input) < 3 else self.input[2]
+        # Output tensor with clipped input elements
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Clip, self).accept(visitor, network)
+        visitor.visit_clip(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, i_min: str, i_max: str, o_output: str):
+        attributes = {
+        }
+        return cls([i_input, i_min, i_max], [o_output], None, None, None, attributes, None)
+
+
+class RNN(Operation):
+    """
+Computes an one-layer simple RNN. This operator is usually supported
+via some custom implementation such as CuDNN.
+
+Notations:
+
+`X` - input tensor
+
+`i` - input gate
+
+`t` - time step (t-1 means previous time step)
+
+`Wi` - W parameter weight matrix for input gate
+
+`Ri` - R recurrence weight matrix for input gate
+
+`Wbi` - W parameter bias vector for input gate
+
+`Rbi` - R parameter bias vector for input gate
+
+`WBi` - W parameter weight matrix for backward input gate
+
+`RBi` - R recurrence weight matrix for backward input gate
+
+`WBbi` - WR bias vectors for backward input gate
+
+`RBbi` - RR bias vectors for backward input gate
+
+`H` - Hidden state
+
+`num_directions` - 2 if direction == bidirectional else 1
+
+Activation functions:
+
+  Relu(x)                - max(0, x)
+
+  Tanh(x)                - (1 - e^{-2x})/(1 + e^{-2x})
+
+  Sigmoid(x)             - 1/(1 + e^{-x})
+
+  (NOTE: Below are optional)
+
+  Affine(x)              - alpha*x + beta
+
+  LeakyRelu(x)           - x if x >= 0 else alpha * x
+
+  ThresholdedRelu(x)     - x if x >= alpha else 0
+
+  ScaledTanh(x)          - alpha*Tanh(beta*x)
+
+  HardSigmoid(x)         - min(max(alpha*x + beta, 0), 1)
+
+  Elu(x)                 - x if x >= 0 else alpha*(e^x - 1)
+
+  Softsign(x)            - x/(1 + |x|)
+
+  Softplus(x)            - log(1 + e^x)
+
+Equations (Default: f=Tanh):
+
+  - Ht = f(Xt*(Wi^T) + Ht-1*(Ri^T) + Wbi + Rbi)
+This operator has **optional** inputs/outputs. See [the doc](IR.md) for more details about the representation of optional arguments. An empty string may be used in the place of an actual argument's name to indicate a missing argument. Trailing optional arguments (those not followed by an argument that is present) may also be simply omitted.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(RNN, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.activation_alpha = self.attributes.get('activation_alpha')
+        self.activation_beta = self.attributes.get('activation_beta')
+        self.activations = self.attributes.get('activations')
+        self.clip = self.attributes.get('clip')
+        self.direction = self.attributes.get('direction')
+        self.hidden_size = self.attributes.get('hidden_size')
+        # The input sequences packed (and potentially padded) into one 3-D tensor with the shape of `[seq_length, batch_size, input_size]`.
+        self.i_X = self.input[0]
+        # The weight tensor for input gate. Concatenation of `Wi` and `WBi` (if bidirectional). The tensor has shape `[num_directions, hidden_size, input_size]`.
+        self.i_W = self.input[1]
+        # The recurrence weight tensor. Concatenation of `Ri` and `RBi` (if bidirectional). The tensor has shape `[num_directions, hidden_size, hidden_size]`.
+        self.i_R = self.input[2]
+        # The bias tensor for input gate. Concatenation of `[Wbi, Rbi]` and `[WBbi, RBbi]` (if bidirectional). The tensor has shape `[num_directions, 2*hidden_size]`. Optional: If not specified - assumed to be 0.
+        # OPTIONAL
+        self.i_B = None if len(self.input) < 4 else self.input[3]
+        # Optional tensor specifying lengths of the sequences in a batch. If not specified - assumed all sequences in the batch to have length `seq_length`. It has shape `[batch_size]`.
+        # OPTIONAL
+        self.i_sequence_lens = None if len(self.input) < 5 else self.input[4]
+        # Optional initial value of the hidden. If not specified - assumed to be 0. It has shape `[num_directions, batch_size, hidden_size]`.
+        # OPTIONAL
+        self.i_initial_h = None if len(self.input) < 6 else self.input[5]
+        # A tensor that concats all the intermediate output values of the hidden. It has shape `[seq_length, num_directions, batch_size, hidden_size]`. 
+        # OPTIONAL
+        self.o_Y = None if len(self.output) < 1 else self.output[0]
+        # The last output value of the hidden. It has shape `[num_directions, batch_size, hidden_size]`.
+        # OPTIONAL
+        self.o_Y_h = None if len(self.output) < 2 else self.output[1]
+
+    def accept(self, visitor, network):
+        super(RNN, self).accept(visitor, network)
+        visitor.visit_rnn(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, i_W: str, i_R: str, i_B: str, i_sequence_lens: str, i_initial_h: str, o_Y: str, o_Y_h: str, activation_alpha: OnnxAttribute, activation_beta: OnnxAttribute, activations: OnnxAttribute, clip: OnnxAttribute, direction: OnnxAttribute, hidden_size: OnnxAttribute):
+        attributes = {
+            'activation_alpha': activation_alpha,
+            'activation_beta': activation_beta,
+            'activations': activations,
+            'clip': clip,
+            'direction': direction,
+            'hidden_size': hidden_size,
+        }
+        return cls([i_X, i_W, i_R, i_B, i_sequence_lens, i_initial_h], [o_Y, o_Y_h], None, None, None, attributes, None)
+
+
+class Concat(Operation):
+    """Concatenate a list of tensors into a single tensor. All input tensors must have the same shape, except for the dimension size of the axis to concatenate on.    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Concat, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axis = self.attributes.get('axis')
+        # List of tensors for concatenation
+        # input is variadic [1,infty) just use self.input to access whole list
+        # Concatenated tensor
+        self.o_concat_result = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Concat, self).accept(visitor, network)
+        visitor.visit_concat(self, network)
+
+    @classmethod
+    def create_op(cls, i_inputs: str, o_concat_result: str, axis: OnnxAttribute):
+        attributes = {
+            'axis': axis,
+        }
+        return cls([i_inputs], [o_concat_result], None, None, None, attributes, None)
+
+
+class Constant(Operation):
+    """
+A constant tensor. Exactly one of the two attributes, either value or sparse_value,
+must be specified.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Constant, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.sparse_value = self.attributes.get('sparse_value')
+        self.value = self.attributes.get('value')
+        # Output tensor containing the same value of the provided tensor.
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Constant, self).accept(visitor, network)
+        visitor.visit_constant(self, network)
+
+    @classmethod
+    def create_op(cls, o_output: str, sparse_value: OnnxAttribute, value: OnnxAttribute):
+        attributes = {
+            'sparse_value': sparse_value,
+            'value': value,
+        }
+        return cls([], [o_output], None, None, None, attributes, None)
+
+
+class LpPool(Operation):
+    """
+ LpPool consumes an input tensor X and applies Lp pooling across
+ the tensor according to kernel sizes, stride sizes, and pad lengths.
+ Lp pooling consisting of computing the Lp norm on all values of a subset
+ of the input tensor according to the kernel size and downsampling the
+ data into the output tensor Y for further processing.    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(LpPool, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.auto_pad = self.attributes.get('auto_pad')
+        self.kernel_shape = self.attributes.get('kernel_shape')
+        self.p = self.attributes.get('p')
+        self.pads = self.attributes.get('pads')
+        self.strides = self.attributes.get('strides')
+        # Input data tensor from the previous operator; dimensions for image case are (N x C x H x W), where N is the batch size, C is the number of channels, and H and W are the height and the width of the data. For non image case, the dimensions are in the form of (N x C x D1 x D2 ... Dn), where N is the batch size.
+        self.i_X = self.input[0]
+        # Output data tensor from Lp pooling across the input tensor. Dimensions will vary based on various kernel, stride, and pad sizes.
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(LpPool, self).accept(visitor, network)
+        visitor.visit_lppool(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, auto_pad: OnnxAttribute, kernel_shape: OnnxAttribute, p: OnnxAttribute, pads: OnnxAttribute, strides: OnnxAttribute):
+        attributes = {
+            'auto_pad': auto_pad,
+            'kernel_shape': kernel_shape,
+            'p': p,
+            'pads': pads,
+            'strides': strides,
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class Conv(Operation):
+    """
+The convolution operator consumes an input tensor and a filter, and
+computes the output.    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Conv, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.auto_pad = self.attributes.get('auto_pad')
+        self.dilations = self.attributes.get('dilations')
+        self.group = self.attributes.get('group')
+        self.kernel_shape = self.attributes.get('kernel_shape')
+        self.pads = self.attributes.get('pads')
+        self.strides = self.attributes.get('strides')
+        # Input data tensor from previous layer; has size (N x C x H x W), where N is the batch size, C is the number of channels, and H and W are the height and width. Note that this is for the 2D image. Otherwise the size is (N x C x D1 x D2 ... x Dn). Optionally, if dimension denotation is in effect, the operation expects input data tensor to arrive with the dimension denotation of [DATA_BATCH, DATA_CHANNEL, DATA_FEATURE, DATA_FEATURE ...].
+        self.i_X = self.input[0]
+        # The weight tensor that will be used in the convolutions; has size (M x C/group x kH x kW), where C is the number of channels, and kH and kW are the height and width of the kernel, and M is the number of feature maps. For more than 2 dimensions, the kernel shape will be (M x C/group x k1 x k2 x ... x kn), where (k1 x k2 x ... kn) is the dimension of the kernel. Optionally, if dimension denotation is in effect, the operation expects the weight tensor to arrive with the dimension denotation of [FILTER_OUT_CHANNEL, FILTER_IN_CHANNEL, FILTER_SPATIAL, FILTER_SPATIAL ...]. X.shape[1] == (W.shape[1] * group) == C (assuming zero based indices for the shape array). Or in other words FILTER_IN_CHANNEL should be equal to DATA_CHANNEL. 
+        self.i_W = self.input[1]
+        # Optional 1D bias to be added to the convolution, has size of M.
+        # OPTIONAL
+        self.i_B = None if len(self.input) < 3 else self.input[2]
+        # Output data tensor that contains the result of the convolution. The output dimensions are functions of the kernel size, stride size, and pad lengths.
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Conv, self).accept(visitor, network)
+        visitor.visit_conv(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, i_W: str, i_B: str, o_Y: str, auto_pad: OnnxAttribute, dilations: OnnxAttribute, group: OnnxAttribute, kernel_shape: OnnxAttribute, pads: OnnxAttribute, strides: OnnxAttribute):
+        attributes = {
+            'auto_pad': auto_pad,
+            'dilations': dilations,
+            'group': group,
+            'kernel_shape': kernel_shape,
+            'pads': pads,
+            'strides': strides,
+        }
+        return cls([i_X, i_W, i_B], [o_Y], None, None, None, attributes, None)
+
+
+class Not(Operation):
+    """
+Returns the negation of the input tensor element-wise.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Not, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_X = self.input[0]
+        # Output tensor
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Not, self).accept(visitor, network)
+        visitor.visit_not(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str):
+        attributes = {
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class Gather(Operation):
+    """
+Given `data` tensor of rank r >= 1, and `indices` tensor of rank q, gather
+entries of the axis dimension of `data` (by default outer-most one as axis=0) indexed by `indices`, and concatenates
+them in an output tensor of rank q + (r - 1).
+
+axis = 0 :
+
+Let
+k = indices[i_{0}, ..., i_{q-1}]
+Then
+output[i_{0}, ..., i_{q-1}, j_{0}, ..., j_{r-2}] = input[k , j_{0}, ..., j_{r-2}]
+
+```
+  data = [
+      [1.0, 1.2],
+      [2.3, 3.4],
+      [4.5, 5.7],
+  ]
+  indices = [
+      [0, 1],
+      [1, 2],
+  ]
+  output = [
+      [
+          [1.0, 1.2],
+          [2.3, 3.4],
+      ],
+      [
+          [2.3, 3.4],
+          [4.5, 5.7],
+      ],
+  ]
+```
+axis = 1 :
+
+Let
+k = indices[i_{0}, ..., i_{q-1}]
+Then
+output[i_{0}, ..., i_{q-1}, j_{0}, ..., j_{r-2}] = input[j_{0}, k, j_{1}, ..., j_{r-2}]
+
+```
+  data = [
+      [1.0, 1.2, 1.9],
+      [2.3, 3.4, 3.9],
+      [4.5, 5.7, 5.9],
+  ]
+  indices = [
+      [0, 2],
+  ]
+  axis = 1,
+  output = [
+      [
+          [1.0, 1.9],
+          [2.3, 3.9],
+          [4.5, 5.9],
+      ],
+  ]
+```
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Gather, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axis = self.attributes.get('axis')
+        # Tensor of rank r >= 1.
+        self.i_data = self.input[0]
+        # Tensor of int32/int64 indices, of any rank q. All index values are expected to be within bounds [-s, s-1] along axis of size s. It is an error if any of the index values are out of bounds.
+        self.i_indices = self.input[1]
+        # Tensor of rank q + (r - 1).
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Gather, self).accept(visitor, network)
+        visitor.visit_gather(self, network)
+
+    @classmethod
+    def create_op(cls, i_data: str, i_indices: str, o_output: str, axis: OnnxAttribute):
+        attributes = {
+            'axis': axis,
+        }
+        return cls([i_data, i_indices], [o_output], None, None, None, attributes, None)
+
+
+class ConvTranspose(Operation):
+    """
+The convolution transpose operator consumes an input tensor and a filter,
+and computes the output.
+
+If the pads parameter is provided the shape of the output is calculated via the following equation:
+
+  output_shape[i] = stride[i] * (input_size[i] - 1) + output_padding[i] + ((kernel_shape[i] - 1) * dilations[i] + 1) - pads[start_i] - pads[end_i]
+
+output_shape can also be explicitly specified in which case pads values are auto generated using these equations:
+
+  total_padding[i] = stride[i] * (input_size[i] - 1) + output_padding[i] + ((kernel_shape[i] - 1) * dilations[i] + 1) - output_shape[i]
+  If (auto_pads != SAME_UPPER): pads[start_i] = total_padding[i]/2; pads[end_i] = total_padding[i] - (total_padding[i]/2)
+  Else: pads[start_i] = total_padding[i] - (total_padding[i]/2); pads[end_i] = (total_padding[i]/2).
+
+        """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(ConvTranspose, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.auto_pad = self.attributes.get('auto_pad')
+        self.dilations = self.attributes.get('dilations')
+        self.group = self.attributes.get('group')
+        self.kernel_shape = self.attributes.get('kernel_shape')
+        self.output_padding = self.attributes.get('output_padding')
+        self.output_shape = self.attributes.get('output_shape')
+        self.pads = self.attributes.get('pads')
+        self.strides = self.attributes.get('strides')
+        # Input data tensor from previous layer; has size (N x C x H x W), where N is the batch size, C is the number of channels, and H and W are the height and width. Note that this is for the 2D image. Otherwise the size is (N x C x D1 x D2 ... x Dn)
+        self.i_X = self.input[0]
+        # The weight tensor that will be used in the convolutions; has size (C x M/group x kH x kW), where C is the number of channels, and kH and kW are the height and width of the kernel, and M is the number of feature maps. For more than 2 dimensions, the weight shape will be (C x M/group x k1 x k2 x ... x kn), where (k1 x k2 x ... x kn) is the dimension of the kernel. The number of channels in the output should be equal to W.shape[1] * group (assuming zero based indices of the shape array)
+        self.i_W = self.input[1]
+        # Optional 1D bias to be added to the convolution, has size of M.
+        # OPTIONAL
+        self.i_B = None if len(self.input) < 3 else self.input[2]
+        # Output data tensor that contains the result of the convolution. The output dimensions are functions of the kernel size, stride size, pad lengths and group count. The number of channels in the output should be equal to W.shape[1] * group (assuming zero based indices of the shape array)
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(ConvTranspose, self).accept(visitor, network)
+        visitor.visit_convtranspose(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, i_W: str, i_B: str, o_Y: str, auto_pad: OnnxAttribute, dilations: OnnxAttribute, group: OnnxAttribute, kernel_shape: OnnxAttribute, output_padding: OnnxAttribute, output_shape: OnnxAttribute, pads: OnnxAttribute, strides: OnnxAttribute):
+        attributes = {
+            'auto_pad': auto_pad,
+            'dilations': dilations,
+            'group': group,
+            'kernel_shape': kernel_shape,
+            'output_padding': output_padding,
+            'output_shape': output_shape,
+            'pads': pads,
+            'strides': strides,
+        }
+        return cls([i_X, i_W, i_B], [o_Y], None, None, None, attributes, None)
+
+
+class Dropout(Operation):
+    """
+Dropout takes one input floating tensor and produces two tensor outputs,
+output (floating tensor) and mask (`Tensor<bool>`). Depending on whether it is
+in test mode or not, the output Y will either be a random dropout, or a simple
+copy of the input. Note that our implementation of Dropout does scaling in
+the training phase, so during testing nothing needs to be done.
+This operator has **optional** inputs/outputs. See [the doc](IR.md) for more details about the representation of optional arguments. An empty string may be used in the place of an actual argument's name to indicate a missing argument. Trailing optional arguments (those not followed by an argument that is present) may also be simply omitted.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Dropout, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.ratio = self.attributes.get('ratio')
+        # The input data as Tensor.
+        self.i_data = self.input[0]
+        # The output.
+        self.o_output = self.output[0]
+        # The output mask.
+        # OPTIONAL
+        self.o_mask = None if len(self.output) < 2 else self.output[1]
+
+    def accept(self, visitor, network):
+        super(Dropout, self).accept(visitor, network)
+        visitor.visit_dropout(self, network)
+
+    @classmethod
+    def create_op(cls, i_data: str, o_output: str, o_mask: str, ratio: OnnxAttribute):
+        attributes = {
+            'ratio': ratio,
+        }
+        return cls([i_data], [o_output, o_mask], None, None, None, attributes, None)
+
+
+class LeakyRelu(Operation):
+    """
+LeakyRelu takes input data (Tensor<T>) and an argument alpha, and produces one
+output data (Tensor<T>) where the function `f(x) = alpha * x for x < 0`,
+`f(x) = x for x >= 0`, is applied to the data tensor elementwise.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(LeakyRelu, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.alpha = self.attributes.get('alpha')
+        # Input tensor
+        self.i_X = self.input[0]
+        # Output tensor
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(LeakyRelu, self).accept(visitor, network)
+        visitor.visit_leakyrelu(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, alpha: OnnxAttribute):
+        attributes = {
+            'alpha': alpha,
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class Elu(Operation):
+    """
+Elu takes one input data (Tensor<T>) and produces one output data
+(Tensor<T>) where the function `f(x) = alpha * (exp(x) - 1.) for x <
+0`, `f(x) = x for x >= 0`., is applied to the tensor elementwise.
+
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Elu, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.alpha = self.attributes.get('alpha')
+        # 1D input tensor
+        self.i_X = self.input[0]
+        # 1D input tensor
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Elu, self).accept(visitor, network)
+        visitor.visit_elu(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, alpha: OnnxAttribute):
+        attributes = {
+            'alpha': alpha,
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class GlobalAveragePool(Operation):
+    """
+ GlobalAveragePool consumes an input tensor X and applies average pooling across
+ the values in the same channel. This is equivalent to AveragePool with kernel size
+ equal to the spatial dimension of input tensor.    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(GlobalAveragePool, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input data tensor from the previous operator; dimensions for image case are (N x C x H x W), where N is the batch size, C is the number of channels, and H and W are the height and the width of the data. For non image case, the dimensions are in the form of (N x C x D1 x D2 ... Dn), where N is the batch size.
+        self.i_X = self.input[0]
+        # Output data tensor from pooling across the input tensor. The output tensor has the same rank as the input. The first two dimensions of output shape are the same as the input (N x C), while the other dimensions are all 1.
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(GlobalAveragePool, self).accept(visitor, network)
+        visitor.visit_globalaveragepool(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str):
+        attributes = {
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class GatherElements(Operation):
+    """
+
+GatherElements takes two inputs `data` and `indices` of the same rank r >= 1
+and an optional attribute `axis` that identifies an axis of `data`
+(by default, the outer-most axis, that is axis 0). It is an indexing operation
+that produces its output by indexing into the input data tensor at index
+positions determined by elements of the `indices` tensor.
+Its output shape is the same as the shape of `indices` and consists of one value
+(gathered from the `data`) for each element in `indices`.
+
+For instance, in the 3-D case (r = 3), the output produced is determined
+by the following equations: 
+```
+  out[i][j][k] = input[index[i][j][k]][j][k] if axis = 0,
+  out[i][j][k] = input[i][index[i][j][k]][k] if axis = 1,
+  out[i][j][k] = input[i][j][index[i][j][k]] if axis = 2,
+```
+
+This operator is also the inverse of ScatterElements. It is similar to Torch's gather operation.
+
+Example 1:
+```
+  data = [
+      [1, 2],
+      [3, 4],
+  ]
+  indices = [
+      [0, 0],
+      [1, 0],
+  ]
+  axis = 1
+  output = [
+      [
+        [1, 1],
+        [4, 3],
+      ],
+  ]
+```
+Example 2:
+```
+  data = [
+      [1, 2, 3],
+      [4, 5, 6],
+      [7, 8, 9],
+  ]
+  indices = [
+      [1, 2, 0],
+      [2, 0, 0],
+  ]
+  axis = 0
+  output = [
+      [
+        [4, 8, 3],
+        [7, 2, 3],
+      ],
+  ]
+```
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(GatherElements, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axis = self.attributes.get('axis')
+        # Tensor of rank r >= 1.
+        self.i_data = self.input[0]
+        # Tensor of int32/int64 indices, with the same rank r as the input. All index values are expected to be within bounds [-s, s-1] along axis of size s. It is an error if any of the index values are out of bounds.
+        self.i_indices = self.input[1]
+        # Tensor of the same shape as indices.
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(GatherElements, self).accept(visitor, network)
+        visitor.visit_gatherelements(self, network)
+
+    @classmethod
+    def create_op(cls, i_data: str, i_indices: str, o_output: str, axis: OnnxAttribute):
+        attributes = {
+            'axis': axis,
+        }
+        return cls([i_data, i_indices], [o_output], None, None, None, attributes, None)
+
+
+class Gemm(Operation):
+    """General Matrix multiplication:
+https://en.wikipedia.org/wiki/Basic_Linear_Algebra_Subprograms#Level_3
+
+A' = transpose(A) if transA else A
+
+B' = transpose(B) if transB else B
+
+Compute Y = alpha * A' * B' + beta * C, where input tensor A has shape (M, K) or (K, M),
+input tensor B has shape (K, N) or (N, K), input tensor C is broadcastable to shape (M, N),
+and output tensor Y has shape (M, N). A will be transposed before doing the
+computation if attribute transA is non-zero, same for B and transB.
+This operator supports **unidirectional broadcasting** (tensor C should be unidirectional broadcastable to tensor A * B); for more details please check [the doc](Broadcasting.md).
+This operator has **optional** inputs/outputs. See [the doc](IR.md) for more details about the representation of optional arguments. An empty string may be used in the place of an actual argument's name to indicate a missing argument. Trailing optional arguments (those not followed by an argument that is present) may also be simply omitted.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Gemm, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.alpha = self.attributes.get('alpha')
+        self.beta = self.attributes.get('beta')
+        self.transA = self.attributes.get('transA')
+        self.transB = self.attributes.get('transB')
+        # Input tensor A. The shape of A should be (M, K) if transA is 0, or (K, M) if transA is non-zero.
+        self.i_A = self.input[0]
+        # Input tensor B. The shape of B should be (K, N) if transB is 0, or (N, K) if transB is non-zero.
+        self.i_B = self.input[1]
+        # Optional input tensor C. If not specified, the computation is done as if C is a scalar 0. The shape of C should be unidirectional broadcastable to (M, N).
+        # OPTIONAL
+        self.i_C = None if len(self.input) < 3 else self.input[2]
+        # Output tensor of shape (M, N).
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Gemm, self).accept(visitor, network)
+        visitor.visit_gemm(self, network)
+
+    @classmethod
+    def create_op(cls, i_A: str, i_B: str, i_C: str, o_Y: str, alpha: OnnxAttribute, beta: OnnxAttribute, transA: OnnxAttribute, transB: OnnxAttribute):
+        attributes = {
+            'alpha': alpha,
+            'beta': beta,
+            'transA': transA,
+            'transB': transB,
+        }
+        return cls([i_A, i_B, i_C], [o_Y], None, None, None, attributes, None)
+
+
+class MaxPool(Operation):
+    """
+ MaxPool consumes an input tensor X and applies max pooling across
+ the tensor according to kernel sizes, stride sizes, and pad lengths.
+ max pooling consisting of computing the max on all values of a
+ subset of the input tensor according to the kernel size and downsampling the
+ data into the output tensor Y for further processing. The output spatial shape will be following:
+ ```
+ output_spatial_shape[i] = floor((input_spatial_shape[i] + pad_shape[i] - ((kernel_spatial_shape[i] - 1) * dilations[i] + 1)) / strides_spatial_shape[i] + 1)
+ ```
+ or
+ ```
+ output_spatial_shape[i] = ceil((input_spatial_shape[i] + pad_shape[i] - ((kernel_spatial_shape[i] - 1) * dilations[i] + 1)) / strides_spatial_shape[i] + 1)
+ ```
+ if ceil_mode is enabled
+
+ ```
+ * pad_shape[i] is sum of pads along axis i
+ ```
+
+ `auto_pad` is a DEPRECATED attribute. If you are using them currently, the output spatial shape will be following:
+ ```
+ VALID: output_spatial_shape[i] = ceil((input_spatial_shape[i] - ((kernel_spatial_shape[i] - 1) * dilations[i] + 1) + 1) / strides_spatial_shape[i])
+ SAME_UPPER or SAME_LOWER: output_spatial_shape[i] = ceil(input_spatial_shape[i] / strides_spatial_shape[i])
+ ```
+ And pad shape will be following if `SAME_UPPER` or `SAME_LOWER`:
+ ```
+ pad_shape[i] = (output_spatial_shape[i] - 1) * strides_spatial_shape[i] + ((kernel_spatial_shape[i] - 1) * dilations[i] + 1) - input_spatial_shape[i]
+ ```
+ The output of each pooling window is maximum number of elements exclude pad.
+     """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(MaxPool, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.auto_pad = self.attributes.get('auto_pad')
+        self.ceil_mode = self.attributes.get('ceil_mode')
+        self.dilations = self.attributes.get('dilations')
+        self.kernel_shape = self.attributes.get('kernel_shape')
+        self.pads = self.attributes.get('pads')
+        self.storage_order = self.attributes.get('storage_order')
+        self.strides = self.attributes.get('strides')
+        # Input data tensor from the previous operator; dimensions for image case are (N x C x H x W), where N is the batch size, C is the number of channels, and H and W are the height and the width of the data. For non image case, the dimensions are in the form of (N x C x D1 x D2 ... Dn), where N is the batch size. Optionally, if dimension denotation is in effect, the operation expects the input data tensor to arrive with the dimension denotation of [DATA_BATCH, DATA_CHANNEL, DATA_FEATURE, DATA_FEATURE ...].
+        self.i_X = self.input[0]
+        # Output data tensor from average or max pooling across the input tensor. Dimensions will vary based on various kernel, stride, and pad sizes. Floor value of the dimension is used
+        self.o_Y = self.output[0]
+        # Indices tensor from max pooling across the input tensor. The dimensions of indices are the same as output tensor. The values in indices of are the indices of the selected values during pooling. The indices are computed as flatten 1-D tensor, and the indices do not consider padding. So the values in indices are in [0, N x C x D1 x ... x Dn).
+        # OPTIONAL
+        self.o_Indices = None if len(self.output) < 2 else self.output[1]
+
+    def accept(self, visitor, network):
+        super(MaxPool, self).accept(visitor, network)
+        visitor.visit_maxpool(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, o_Indices: str, auto_pad: OnnxAttribute, ceil_mode: OnnxAttribute, dilations: OnnxAttribute, kernel_shape: OnnxAttribute, pads: OnnxAttribute, storage_order: OnnxAttribute, strides: OnnxAttribute):
+        attributes = {
+            'auto_pad': auto_pad,
+            'ceil_mode': ceil_mode,
+            'dilations': dilations,
+            'kernel_shape': kernel_shape,
+            'pads': pads,
+            'storage_order': storage_order,
+            'strides': strides,
+        }
+        return cls([i_X], [o_Y, o_Indices], None, None, None, attributes, None)
+
+
+class Equal(Operation):
+    """
+Returns the tensor resulted from performing the `equal` logical operation
+elementwise on the input tensors `A` and `B` (with Numpy-style broadcasting support).
+
+This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Equal, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # First input operand for the logical operator.
+        self.i_A = self.input[0]
+        # Second input operand for the logical operator.
+        self.i_B = self.input[1]
+        # Result tensor.
+        self.o_C = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Equal, self).accept(visitor, network)
+        visitor.visit_equal(self, network)
+
+    @classmethod
+    def create_op(cls, i_A: str, i_B: str, o_C: str):
+        attributes = {
+        }
+        return cls([i_A, i_B], [o_C], None, None, None, attributes, None)
 
 
 class Tile(Operation):
@@ -187,163 +1693,24 @@ For example A = [[1, 2], [3, 4]], B = [1, 2], tile(A, B) = [[1, 2, 1, 2], [3, 4,
         return cls([i_input, i_repeats], [o_output], None, None, None, attributes, None)
 
 
-class ThresholdedRelu(Operation):
+class Flatten(Operation):
     """
-ThresholdedRelu takes one input data (Tensor<T>) and produces one output data
-(Tensor<T>) where the rectified linear function, y = x for x > alpha, y = 0 otherwise,
-is applied to the tensor elementwise.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(ThresholdedRelu, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.alpha = self.attributes.get('alpha')
-        # Input tensor
-        self.i_X = self.input[0]
-        # Output tensor
-        self.o_Y = self.output[0]
-
-    def accept(self, visitor, network):
-        super(ThresholdedRelu, self).accept(visitor, network)
-        visitor.visit_thresholdedrelu(self, network)
-
-    @classmethod
-    def create_op(cls, i_X: str, o_Y: str, alpha: OnnxAttribute):
-        attributes = {
-            'alpha': alpha,
-        }
-        return cls([i_X], [o_Y], None, None, None, attributes, None)
-
-
-class Tanh(Operation):
-    """
-Calculates the hyperbolic tangent of the given input tensor element-wise.
+Flattens the input tensor into a 2D matrix. If input tensor has shape
+(d_0, d_1, ... d_n) then the output will have shape
+(d_0 X d_1 ... d_(axis-1), d_axis X d_(axis+1) ... X dn).
     """
 
     def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Tanh, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # Input tensor
-        self.i_input = self.input[0]
-        # The hyperbolic tangent values of the input tensor computed element-wise
-        self.o_output = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Tanh, self).accept(visitor, network)
-        visitor.visit_tanh(self, network)
-
-    @classmethod
-    def create_op(cls, i_input: str, o_output: str):
-        attributes = {
-        }
-        return cls([i_input], [o_output], None, None, None, attributes, None)
-
-
-class Sum(Operation):
-    """
-Element-wise sum of each of the input tensors. All inputs and outputs must
-have the same shape and data type.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Sum, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # List of tensors for Sum.
-        # input is variadic [1,infty) just use self.input to access whole list
-        # Output tensor. Same dimension as inputs.
-        self.o_sum = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Sum, self).accept(visitor, network)
-        visitor.visit_sum(self, network)
-
-    @classmethod
-    def create_op(cls, i_data_0: str, o_sum: str):
-        attributes = {
-        }
-        return cls([i_data_0], [o_sum], None, None, None, attributes, None)
-
-
-class Squeeze(Operation):
-    """
-Remove single-dimensional entries from the shape of a tensor.
-Takes a  parameter `axes` with a list of axes to squeeze.
-If an axis is selected with shape entry not equal to one, an error is raised.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Squeeze, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.axes = self.attributes.get('axes')
-        # Tensors with at least max(dims) dimensions.
-        self.i_data = self.input[0]
-        # Reshaped tensor with same data as input.
-        self.o_squeezed = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Squeeze, self).accept(visitor, network)
-        visitor.visit_squeeze(self, network)
-
-    @classmethod
-    def create_op(cls, i_data: str, o_squeezed: str, axes: OnnxAttribute):
-        attributes = {
-            'axes': axes,
-        }
-        return cls([i_data], [o_squeezed], None, None, None, attributes, None)
-
-
-class SpaceToDepth(Operation):
-    """SpaceToDepth rearranges blocks of spatial data into depth. More specifically,
-this op outputs a copy of the input tensor where values from the height and width dimensions
-are moved to the depth dimension.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(SpaceToDepth, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.blocksize = self.attributes.get('blocksize')
-        # Input tensor of [N,C,H,W], where N is the batch axis, C is the channel or depth, H is the height and W is the width.
-        self.i_input = self.input[0]
-        # Output tensor of [N, C * blocksize * blocksize, H/blocksize, W/blocksize].
-        self.o_output = self.output[0]
-
-    def accept(self, visitor, network):
-        super(SpaceToDepth, self).accept(visitor, network)
-        visitor.visit_spacetodepth(self, network)
-
-    @classmethod
-    def create_op(cls, i_input: str, o_output: str, blocksize: OnnxAttribute):
-        attributes = {
-            'blocksize': blocksize,
-        }
-        return cls([i_input], [o_output], None, None, None, attributes, None)
-
-
-class Softmax(Operation):
-    """
-The operator computes the softmax (normalized exponential) values for each layer in the batch
- of the given input. The input is a 2-D tensor (Tensor<float>) of size
-(batch_size x input_feature_dimensions). The output tensor has the same shape
-and contains the softmax values of the corresponding input.
-
-X does not need to explicitly be a 2D vector; rather, it will be
-coerced into one. For an arbitrary n-dimensional tensor
-X \in [a_0, a_1, ..., a_{k-1}, a_k, ..., a_{n-1}] and k is
-the axis provided, then X will be coerced into a 2-dimensional tensor with
-dimensions [a_0 * ... * a_{k-1}, a_k * ... * a_{n-1}]. For the default
-case where axis=1, this means the X tensor will be coerced into a 2D tensor
-of dimensions [a_0, a_1 * ... * a_{n-1}], where a_0 is often the batch size.
-In this situation, we must have a_0 = N and a_1 * ... * a_{n-1} = D.
-Each of these dimensions must be matched correctly, or else the operator
-will throw errors.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Softmax, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        super(Flatten, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
         self.axis = self.attributes.get('axis')
-        # The input tensor that's coerced into a 2D matrix of size (NxD) as described above.
+        # A tensor of rank >= axis.
         self.i_input = self.input[0]
-        # The output values with the same shape as input tensor.
+        # A 2D tensor with the contents of the input tensor, with input dimensions up to axis flattened to the outer dimension of the output and remaining input dimensions flattened into the inner dimension of the output.
         self.o_output = self.output[0]
 
     def accept(self, visitor, network):
-        super(Softmax, self).accept(visitor, network)
-        visitor.visit_softmax(self, network)
+        super(Flatten, self).accept(visitor, network)
+        visitor.visit_flatten(self, network)
 
     @classmethod
     def create_op(cls, i_input: str, o_output: str, axis: OnnxAttribute):
@@ -353,471 +1720,29 @@ will throw errors.
         return cls([i_input], [o_output], None, None, None, attributes, None)
 
 
-class Slice(Operation):
+class Floor(Operation):
     """
-Produces a slice of the input tensor along multiple axes. Similar to numpy:
-https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html
-Slices uses `axes`, `starts` and `ends` attributes to specify the start and end
-dimension for each axis in the list of axes, it uses this information to
-slice the input `data` tensor. If a negative value is passed for any of the
-start or end indices, it represent number of elements before the end of that
-dimension. If the value passed to start or end is larger than the `n` (the
-number of elements in this dimension), it represents `n`. For slicing to the
-end of a dimension with unknown size, it is recommended to pass in `INT_MAX`.
-If `axes` are omitted, they are set to `[0, ..., ndim-1]`.
-Example 1:
-  data = [
-      [1, 2, 3, 4],
-      [5, 6, 7, 8],
-  ]
-  axes = [0, 1]
-  starts = [1, 0]
-  ends = [2, 3]
-  result = [
-      [5, 6, 7],
-  ]
-Example 2:
-  data = [
-      [1, 2, 3, 4],
-      [5, 6, 7, 8],
-  ]
-  starts = [0, 1]
-  ends = [-1, 1000]
-  result = [
-      [2, 3, 4],
-  ]
+Floor takes one input data (Tensor<T>) and produces one output data
+(Tensor<T>) where the floor is, y = floor(x), is applied to
+the tensor elementwise.
     """
 
     def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Slice, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.axes = self.attributes.get('axes')
-        self.ends = self.attributes.get('ends')
-        self.starts = self.attributes.get('starts')
-        # Tensor of data to extract slices from.
-        self.i_data = self.input[0]
-        # Sliced data tensor.
-        self.o_output = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Slice, self).accept(visitor, network)
-        visitor.visit_slice(self, network)
-
-    @classmethod
-    def create_op(cls, i_data: str, o_output: str, axes: OnnxAttribute, ends: OnnxAttribute, starts: OnnxAttribute):
-        attributes = {
-            'axes': axes,
-            'ends': ends,
-            'starts': starts,
-        }
-        return cls([i_data], [o_output], None, None, None, attributes, None)
-
-
-class Size(Operation):
-    """
-Takes a tensor as input and outputs a int64 scalar that equals to the total number of elements of the input tensor.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Size, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # An input tensor.
-        self.i_data = self.input[0]
-        # Total number of elements of the input tensor
-        self.o_size = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Size, self).accept(visitor, network)
-        visitor.visit_size(self, network)
-
-    @classmethod
-    def create_op(cls, i_data: str, o_size: str):
-        attributes = {
-        }
-        return cls([i_data], [o_size], None, None, None, attributes, None)
-
-
-class Shape(Operation):
-    """
-Takes a tensor as input and outputs an 1D int64 tensor containing the shape of the input tensor.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Shape, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # An input tensor.
-        self.i_data = self.input[0]
-        # Shape of the input tensor
-        self.o_shape = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Shape, self).accept(visitor, network)
-        visitor.visit_shape(self, network)
-
-    @classmethod
-    def create_op(cls, i_data: str, o_shape: str):
-        attributes = {
-        }
-        return cls([i_data], [o_shape], None, None, None, attributes, None)
-
-
-class Selu(Operation):
-    """
-Selu takes one input data (Tensor<T>) and produces one output data
-(Tensor<T>) where the scaled exponential linear unit function,
-`y = gamma * (alpha * e^x - alpha) for x <= 0`, `y = gamma * x for x > 0`,
-is applied to the tensor elementwise.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Selu, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.alpha = self.attributes.get('alpha')
-        self.gamma = self.attributes.get('gamma')
+        super(Floor, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
         # Input tensor
         self.i_X = self.input[0]
         # Output tensor
         self.o_Y = self.output[0]
 
     def accept(self, visitor, network):
-        super(Selu, self).accept(visitor, network)
-        visitor.visit_selu(self, network)
-
-    @classmethod
-    def create_op(cls, i_X: str, o_Y: str, alpha: OnnxAttribute, gamma: OnnxAttribute):
-        attributes = {
-            'alpha': alpha,
-            'gamma': gamma,
-        }
-        return cls([i_X], [o_Y], None, None, None, attributes, None)
-
-
-class Transpose(Operation):
-    """
-Transpose the input tensor similar to numpy.transpose. For example, when
-perm=(1, 0, 2), given an input tensor of shape (1, 2, 3), the output shape
-will be (2, 1, 3).
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Transpose, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.perm = self.attributes.get('perm')
-        # An input tensor.
-        self.i_data = self.input[0]
-        # Transposed output.
-        self.o_transposed = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Transpose, self).accept(visitor, network)
-        visitor.visit_transpose(self, network)
-
-    @classmethod
-    def create_op(cls, i_data: str, o_transposed: str, perm: OnnxAttribute):
-        attributes = {
-            'perm': perm,
-        }
-        return cls([i_data], [o_transposed], None, None, None, attributes, None)
-
-
-class ScaledTanh(Operation):
-    """
-Calculates the scaled hyperbolic tangent of the given input tensor element-wise,
-alpha * tanh(beta * x). This operation can be done in an in-place fashion too,
-by providing the same input and output blobs.
-        """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(ScaledTanh, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.alpha = self.attributes.get('alpha')
-        self.beta = self.attributes.get('beta')
-        # Input tensor
-        self.i_input = self.input[0]
-        # The scaled hyperbolic tangent values of the input tensor computed element-wise
-        self.o_output = self.output[0]
-
-    def accept(self, visitor, network):
-        super(ScaledTanh, self).accept(visitor, network)
-        visitor.visit_scaledtanh(self, network)
-
-    @classmethod
-    def create_op(cls, i_input: str, o_output: str, alpha: OnnxAttribute, beta: OnnxAttribute):
-        attributes = {
-            'alpha': alpha,
-            'beta': beta,
-        }
-        return cls([i_input], [o_output], None, None, None, attributes, None)
-
-
-class Sigmoid(Operation):
-    """
-Sigmoid takes one input data (Tensor<T>) and produces one output data
-(Tensor<T>) where the sigmoid function, y = 1 / (1 + exp(-x)), is applied to the
-tensor elementwise.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Sigmoid, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # Input tensor
-        self.i_X = self.input[0]
-        # Output tensor
-        self.o_Y = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Sigmoid, self).accept(visitor, network)
-        visitor.visit_sigmoid(self, network)
+        super(Floor, self).accept(visitor, network)
+        visitor.visit_floor(self, network)
 
     @classmethod
     def create_op(cls, i_X: str, o_Y: str):
         attributes = {
         }
         return cls([i_X], [o_Y], None, None, None, attributes, None)
-
-
-class Scale(Operation):
-    """
-Scale takes one input data (Tensor<float>) and produces one output data
-(Tensor<float>) whose value is the input data tensor scaled element-wise.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Scale, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.scale = self.attributes.get('scale')
-        # Input data to be scaled
-        self.i_input = self.input[0]
-        # Output data after scaling
-        self.o_output = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Scale, self).accept(visitor, network)
-        visitor.visit_scale(self, network)
-
-    @classmethod
-    def create_op(cls, i_input: str, o_output: str, scale: OnnxAttribute):
-        attributes = {
-            'scale': scale,
-        }
-        return cls([i_input], [o_output], None, None, None, attributes, None)
-
-
-class ReduceSumSquare(Operation):
-    """
-Computes the sum square of the input tensor's element along the provided axes. The resulted
-tensor has the same rank as the input if keepdims equal 1. If keepdims equal 0, then
-the resulted tensor have the reduced dimension pruned.
-
-The above behavior is similar to numpy, with the exception that numpy default keepdims to
-False instead of True.    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(ReduceSumSquare, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.axes = self.attributes.get('axes')
-        self.keepdims = self.attributes.get('keepdims')
-        # An input tensor.
-        self.i_data = self.input[0]
-        # Reduced output tensor.
-        self.o_reduced = self.output[0]
-
-    def accept(self, visitor, network):
-        super(ReduceSumSquare, self).accept(visitor, network)
-        visitor.visit_reducesumsquare(self, network)
-
-    @classmethod
-    def create_op(cls, i_data: str, o_reduced: str, axes: OnnxAttribute, keepdims: OnnxAttribute):
-        attributes = {
-            'axes': axes,
-            'keepdims': keepdims,
-        }
-        return cls([i_data], [o_reduced], None, None, None, attributes, None)
-
-
-class ReduceSum(Operation):
-    """
-Computes the sum of the input tensor's element along the provided axes. The resulted
-tensor has the same rank as the input if keepdims equal 1. If keepdims equal 0, then
-the resulted tensor have the reduced dimension pruned.
-
-The above behavior is similar to numpy, with the exception that numpy default keepdims to
-False instead of True.    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(ReduceSum, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.axes = self.attributes.get('axes')
-        self.keepdims = self.attributes.get('keepdims')
-        # An input tensor.
-        self.i_data = self.input[0]
-        # Reduced output tensor.
-        self.o_reduced = self.output[0]
-
-    def accept(self, visitor, network):
-        super(ReduceSum, self).accept(visitor, network)
-        visitor.visit_reducesum(self, network)
-
-    @classmethod
-    def create_op(cls, i_data: str, o_reduced: str, axes: OnnxAttribute, keepdims: OnnxAttribute):
-        attributes = {
-            'axes': axes,
-            'keepdims': keepdims,
-        }
-        return cls([i_data], [o_reduced], None, None, None, attributes, None)
-
-
-class Reshape(Operation):
-    """
-Reshape the input tensor similar to numpy.reshape.
-First input is the data tensor, second input is a shape tensor which specifies the output shape. It outputs the reshaped tensor.
-At most one dimension of the new shape can be -1. In this case, the value is
-inferred from the size of the tensor and the remaining dimensions. A dimension
-could also be 0, in which case the actual dimension value is unchanged (i.e. taken
-from the input tensor).    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Reshape, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # An input tensor.
-        self.i_data = self.input[0]
-        # Specified shape for output.
-        self.i_shape = self.input[1]
-        # Reshaped data.
-        self.o_reshaped = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Reshape, self).accept(visitor, network)
-        visitor.visit_reshape(self, network)
-
-    @classmethod
-    def create_op(cls, i_data: str, i_shape: str, o_reshaped: str):
-        attributes = {
-        }
-        return cls([i_data, i_shape], [o_reshaped], None, None, None, attributes, None)
-
-
-class ReduceProd(Operation):
-    """
-Computes the product of the input tensor's element along the provided axes. The resulted
-tensor has the same rank as the input if keepdims equal 1. If keepdims equal 0, then
-the resulted tensor have the reduced dimension pruned.
-
-The above behavior is similar to numpy, with the exception that numpy default keepdims to
-False instead of True.    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(ReduceProd, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.axes = self.attributes.get('axes')
-        self.keepdims = self.attributes.get('keepdims')
-        # An input tensor.
-        self.i_data = self.input[0]
-        # Reduced output tensor.
-        self.o_reduced = self.output[0]
-
-    def accept(self, visitor, network):
-        super(ReduceProd, self).accept(visitor, network)
-        visitor.visit_reduceprod(self, network)
-
-    @classmethod
-    def create_op(cls, i_data: str, o_reduced: str, axes: OnnxAttribute, keepdims: OnnxAttribute):
-        attributes = {
-            'axes': axes,
-            'keepdims': keepdims,
-        }
-        return cls([i_data], [o_reduced], None, None, None, attributes, None)
-
-
-class Tan(Operation):
-    """
-Calculates the tangent of the given input tensor, element-wise.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Tan, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # Input tensor
-        self.i_input = self.input[0]
-        # The tangent of the input tensor computed element-wise
-        self.o_output = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Tan, self).accept(visitor, network)
-        visitor.visit_tan(self, network)
-
-    @classmethod
-    def create_op(cls, i_input: str, o_output: str):
-        attributes = {
-        }
-        return cls([i_input], [o_output], None, None, None, attributes, None)
-
-
-class GlobalAveragePool(Operation):
-    """
- GlobalAveragePool consumes an input tensor X and applies average pooling across the
- the values in the same channel. This is equivalent to AveragePool with kernel size
- equal to the spatial dimension of input tensor.    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(GlobalAveragePool, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # Input data tensor from the previous operator; dimensions for image case are (N x C x H x W), where N is the batch size, C is the number of channels, and H and W are the height and the width of the data. For non image case, the dimensions are in the form of (N x C x D1 x D2 ... Dn), where N is the batch size.
-        self.i_X = self.input[0]
-        # Output data tensor from pooling across the input tensor. Dimensions will be N x C x 1 x 1
-        self.o_Y = self.output[0]
-
-    def accept(self, visitor, network):
-        super(GlobalAveragePool, self).accept(visitor, network)
-        visitor.visit_globalaveragepool(self, network)
-
-    @classmethod
-    def create_op(cls, i_X: str, o_Y: str):
-        attributes = {
-        }
-        return cls([i_X], [o_Y], None, None, None, attributes, None)
-
-
-class ReduceL2(Operation):
-    """
-Computes the L2 norm of the input tensor's element along the provided axes. The resulted
-tensor has the same rank as the input if keepdims equal 1. If keepdims equal 0, then
-the resulted tensor have the reduced dimension pruned.
-
-The above behavior is similar to numpy, with the exception that numpy default keepdims to
-False instead of True.    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(ReduceL2, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.axes = self.attributes.get('axes')
-        self.keepdims = self.attributes.get('keepdims')
-        # An input tensor.
-        self.i_data = self.input[0]
-        # Reduced output tensor.
-        self.o_reduced = self.output[0]
-
-    def accept(self, visitor, network):
-        super(ReduceL2, self).accept(visitor, network)
-        visitor.visit_reducel2(self, network)
-
-    @classmethod
-    def create_op(cls, i_data: str, o_reduced: str, axes: OnnxAttribute, keepdims: OnnxAttribute):
-        attributes = {
-            'axes': axes,
-            'keepdims': keepdims,
-        }
-        return cls([i_data], [o_reduced], None, None, None, attributes, None)
-
-
-class MeanVarianceNormalization(Operation):
-    """Perform mean variance normalization.    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(MeanVarianceNormalization, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.across_channels = self.attributes.get('across_channels')
-        self.normalize_variance = self.attributes.get('normalize_variance')
-        # Input tensor of shape [N,C,H,W]
-        self.i_input = self.input[0]
-        # Result, has same shape and type as input
-        self.o_output = self.output[0]
-
-    def accept(self, visitor, network):
-        super(MeanVarianceNormalization, self).accept(visitor, network)
-        visitor.visit_meanvariancenormalization(self, network)
-
-    @classmethod
-    def create_op(cls, i_input: str, o_output: str, across_channels: OnnxAttribute, normalize_variance: OnnxAttribute):
-        attributes = {
-            'across_channels': across_channels,
-            'normalize_variance': normalize_variance,
-        }
-        return cls([i_input], [o_output], None, None, None, attributes, None)
 
 
 class GRU(Operation):
@@ -885,13 +1810,13 @@ Activation functions:
 
 Equations (Default: f=Sigmoid, g=Tanh):
 
-  - zt = f(Xt*(Wz^T) + Ht-1*Rz + Wbz + Rbz)
+  - zt = f(Xt*(Wz^T) + Ht-1*(Rz^T) + Wbz + Rbz)
 
-  - rt = f(Xt*(Wr^T) + Ht-1*Rr + Wbr + Rbr)
+  - rt = f(Xt*(Wr^T) + Ht-1*(Rr^T) + Wbr + Rbr)
 
-  - ht = g(Xt*(Wh^T) + (rt (.) Ht-1)*Rh + Rbh + Wbh) # default, when linear_before_reset = 0
+  - ht = g(Xt*(Wh^T) + (rt (.) Ht-1)*(Rh^T) + Rbh + Wbh) # default, when linear_before_reset = 0
 
-  - ht = g(Xt*(Wh^T) + (rt (.) (Ht-1*Rh + Rbh) + Wbh) # when linear_before_reset != 0
+  - ht = g(Xt*(Wh^T) + (rt (.) (Ht-1*(Rh^T) + Rbh)) + Wbh) # when linear_before_reset != 0
 
   - Ht = (1 - zt) (.) ht + zt (.) Ht-1
 This operator has **optional** inputs/outputs. See [the doc](IR.md) for more details about the representation of optional arguments. An empty string may be used in the place of an actual argument's name to indicate a missing argument. Trailing optional arguments (those not followed by an argument that is present) may also be simply omitted.
@@ -946,82 +1871,227 @@ This operator has **optional** inputs/outputs. See [the doc](IR.md) for more det
         return cls([i_X, i_W, i_R, i_B, i_sequence_lens, i_initial_h], [o_Y, o_Y_h], None, None, None, attributes, None)
 
 
-class GivenTensorFill(Operation):
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(GivenTensorFill, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.extra_shape = self.attributes.get('extra_shape')
-        self.input_as_shape = self.attributes.get('input_as_shape')
-        self.shape = self.attributes.get('shape')
-        self.values = self.attributes.get('values')
-        # The shape of filled tensor
-        # OPTIONAL
-        self.i_shape = None if len(self.input) < 1 else self.input[0]
-        # The filled tensor
-        self.o_X = self.output[0]
-
-    def accept(self, visitor, network):
-        super(GivenTensorFill, self).accept(visitor, network)
-        visitor.visit_giventensorfill(self, network)
-
-    @classmethod
-    def create_op(cls, i_shape: str, o_X: str, extra_shape: OnnxAttribute, input_as_shape: OnnxAttribute, shape: OnnxAttribute, values: OnnxAttribute):
-        attributes = {
-            'extra_shape': extra_shape,
-            'input_as_shape': input_as_shape,
-            'shape': shape,
-            'values': values,
-        }
-        return cls([i_shape], [o_X], None, None, None, attributes, None)
-
-
-class Multinomial(Operation):
+class ScatterElements(Operation):
     """
-Generate a tensor of samples from a multinomial distribution according to the probabilities
-of each of the possible outcomes.
-    """
+ScatterElements takes three inputs `data`, `updates`, and `indices` of the same
+rank r >= 1 and an optional attribute axis that identifies an axis of `data`
+(by default, the outer-most axis, that is axis 0). The output of the operation
+is produced by creating a copy of the input `data`, and then updating its value
+to values specified by `updates` at specific index positions specified by
+`indices`. Its output shape is the same as the shape of `data`.
 
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Multinomial, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.dtype = self.attributes.get('dtype')
-        self.sample_size = self.attributes.get('sample_size')
-        self.seed = self.attributes.get('seed')
-        # Input tensor with shape [batch_size, class_size], where class_size is the number of all possible outcomes. Each value along the axis zero represents the unnormalized log-probability of each corresponding outcome in a batch.
-        self.i_input = self.input[0]
-        # Output tensor with shape [batch_size, sample_size], where sample_size is the number of times to sample. Each value along the axis zero represents the outcome of the corresponding sample in a batch.
-        self.o_output = self.output[0]
+For each entry in `updates`, the target index in `data` is obtained by combining
+the corresponding entry in `indices` with the index of the entry itself: the
+index-value for dimension = axis is obtained from the value of the corresponding
+entry in `indices` and the index-value for dimension != axis is obtained from the
+index of the entry itself.
 
-    def accept(self, visitor, network):
-        super(Multinomial, self).accept(visitor, network)
-        visitor.visit_multinomial(self, network)
+For instance, in a 2-D tensor case, the update corresponding to the [i][j] entry
+is performed as below:
+```
+  output[indices[i][j]][j] = updates[i][j] if axis = 0, 
+  output[i][indices[i][j]] = updates[i][j] if axis = 1,
+```
 
-    @classmethod
-    def create_op(cls, i_input: str, o_output: str, dtype: OnnxAttribute, sample_size: OnnxAttribute, seed: OnnxAttribute):
-        attributes = {
-            'dtype': dtype,
-            'sample_size': sample_size,
-            'seed': seed,
-        }
-        return cls([i_input], [o_output], None, None, None, attributes, None)
+This operator is the inverse of GatherElements. It is similar to Torch's Scatter operation.
 
-
-class Flatten(Operation):
-    """
-Flattens the input tensor into a 2D matrix. If input tensor has shape
-(d_0, d_1, ... d_n) then the output will have shape
-(d_0 X d_1 ... d_(axis-1), d_axis X d_(axis+1) ... X dn).
+Example 1:
+```
+  data = [
+      [0.0, 0.0, 0.0],
+      [0.0, 0.0, 0.0],
+      [0.0, 0.0, 0.0],
+  ]
+  indices = [
+      [1, 0, 2],
+      [0, 2, 1],
+  ]
+  updates = [
+      [1.0, 1.1, 1.2],
+      [2.0, 2.1, 2.2],
+  ]
+  output = [
+      [2.0, 1.1, 0.0]
+      [1.0, 0.0, 2.2]
+      [0.0, 2.1, 1.2]
+  ]
+```
+Example 2:
+```
+  data = [[1.0, 2.0, 3.0, 4.0, 5.0]]
+  indices = [[1, 3]]
+  updates = [[1.1, 2.1]]
+  axis = 1
+  output = [[1.0, 1.1, 3.0, 2.1, 5.0]]
+```
     """
 
     def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Flatten, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        super(ScatterElements, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
         self.axis = self.attributes.get('axis')
-        # A tensor of rank >= axis.
-        self.i_input = self.input[0]
-        # A 2D tensor with the contents of the input tensor, with input dimensions up to axis flattened to the outer dimension of the output and remaining input dimensions flattened into the inner dimension of the output.
+        # Tensor of rank r >= 1.
+        self.i_data = self.input[0]
+        # Tensor of int32/int64 indices, of r >= 1 (same rank as input). All index values are expected to be within bounds [-s, s-1] along axis of size s. It is an error if any of the index values are out of bounds.
+        self.i_indices = self.input[1]
+        # Tensor of rank r >=1 (same rank and shape as indices)
+        self.i_updates = self.input[2]
+        # Tensor of rank r >= 1 (same rank as input).
         self.o_output = self.output[0]
 
     def accept(self, visitor, network):
-        super(Flatten, self).accept(visitor, network)
-        visitor.visit_flatten(self, network)
+        super(ScatterElements, self).accept(visitor, network)
+        visitor.visit_scatterelements(self, network)
+
+    @classmethod
+    def create_op(cls, i_data: str, i_indices: str, i_updates: str, o_output: str, axis: OnnxAttribute):
+        attributes = {
+            'axis': axis,
+        }
+        return cls([i_data, i_indices, i_updates], [o_output], None, None, None, attributes, None)
+
+
+class GlobalLpPool(Operation):
+    """
+ GlobalLpPool consumes an input tensor X and applies lp pool pooling across
+ the values in the same channel. This is equivalent to LpPool with kernel size
+ equal to the spatial dimension of input tensor.    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(GlobalLpPool, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.p = self.attributes.get('p')
+        # Input data tensor from the previous operator; dimensions for image case are (N x C x H x W), where N is the batch size, C is the number of channels, and H and W are the height and the width of the data. For non image case, the dimensions are in the form of (N x C x D1 x D2 ... Dn), where N is the batch size.
+        self.i_X = self.input[0]
+        # Output data tensor from pooling across the input tensor. The output tensor has the same rank as the input. The first two dimensions of output shape are the same as the input (N x C), while the other dimensions are all 1.
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(GlobalLpPool, self).accept(visitor, network)
+        visitor.visit_globallppool(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, p: OnnxAttribute):
+        attributes = {
+            'p': p,
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class Greater(Operation):
+    """
+Returns the tensor resulted from performing the `greater` logical operation
+elementwise on the input tensors `A` and `B` (with Numpy-style broadcasting support).
+
+This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Greater, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # First input operand for the logical operator.
+        self.i_A = self.input[0]
+        # Second input operand for the logical operator.
+        self.i_B = self.input[1]
+        # Result tensor.
+        self.o_C = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Greater, self).accept(visitor, network)
+        visitor.visit_greater(self, network)
+
+    @classmethod
+    def create_op(cls, i_A: str, i_B: str, o_C: str):
+        attributes = {
+        }
+        return cls([i_A, i_B], [o_C], None, None, None, attributes, None)
+
+
+class HardSigmoid(Operation):
+    """
+HardSigmoid takes one input data (Tensor<T>) and produces one output data
+(Tensor<T>) where the HardSigmoid function, y = max(0, min(1, alpha * x + beta)),
+is applied to the tensor elementwise.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(HardSigmoid, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.alpha = self.attributes.get('alpha')
+        self.beta = self.attributes.get('beta')
+        # Input tensor
+        self.i_X = self.input[0]
+        # Output tensor
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(HardSigmoid, self).accept(visitor, network)
+        visitor.visit_hardsigmoid(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, alpha: OnnxAttribute, beta: OnnxAttribute):
+        attributes = {
+            'alpha': alpha,
+            'beta': beta,
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class Selu(Operation):
+    """
+Selu takes one input data (Tensor<T>) and produces one output data
+(Tensor<T>) where the scaled exponential linear unit function,
+`y = gamma * (alpha * e^x - alpha) for x <= 0`, `y = gamma * x for x > 0`,
+is applied to the tensor elementwise.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Selu, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.alpha = self.attributes.get('alpha')
+        self.gamma = self.attributes.get('gamma')
+        # Input tensor
+        self.i_X = self.input[0]
+        # Output tensor
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Selu, self).accept(visitor, network)
+        visitor.visit_selu(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, alpha: OnnxAttribute, gamma: OnnxAttribute):
+        attributes = {
+            'alpha': alpha,
+            'gamma': gamma,
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class Hardmax(Operation):
+    """
+The operator computes the hardmax (1 for the first maximum value, and 0 for all others) values for each layer in the batch
+ of the given input.
+
+The input does not need to explicitly be a 2D vector; rather, it will be
+coerced into one. For an arbitrary n-dimensional tensor
+input \in [a_0, a_1, ..., a_{k-1}, a_k, ..., a_{n-1}] and k is
+the axis provided, then input will be coerced into a 2-dimensional tensor with
+dimensions [a_0 * ... * a_{k-1}, a_k * ... * a_{n-1}]. For the default
+case where axis=1, this means the input tensor will be coerced into a 2D tensor
+of dimensions [a_0, a_1 * ... * a_{n-1}], where a_0 is often the batch size.
+In this situation, we must have a_0 = N and a_1 * ... * a_{n-1} = D.
+Each of these dimensions must be matched correctly, or else the operator
+will throw errors. The output tensor has the same shape
+and contains the hardmax values of the corresponding input.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Hardmax, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axis = self.attributes.get('axis')
+        # The input tensor that's coerced into a 2D matrix of size (NxD) as described above.
+        self.i_input = self.input[0]
+        # The output values with the same shape as input tensor (the original size without coercion).
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Hardmax, self).accept(visitor, network)
+        visitor.visit_hardmax(self, network)
 
     @classmethod
     def create_op(cls, i_input: str, o_output: str, axis: OnnxAttribute):
@@ -1031,39 +2101,100 @@ Flattens the input tensor into a 2D matrix. If input tensor has shape
         return cls([i_input], [o_output], None, None, None, attributes, None)
 
 
-class Exp(Operation):
+class If(Operation):
+    """If conditional    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(If, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.else_branch = self.attributes.get('else_branch')
+        self.then_branch = self.attributes.get('then_branch')
+        # Condition for the if
+        self.i_cond = self.input[0]
+        # Values that are live-out to the enclosing scope. The return values in the `then_branch` and `else_branch` must be of the same data type. The `then_branch` and `else_branch` may produce tensors with the same element type and different shapes. If corresponding outputs from the then-branch and the else-branch have static shapes S1 and S2, then the shape of the corresponding output variable of the if-node (if present) must be compatible with both S1 and S2 as it represents the union of both possible shapes.For example, if in a model file, the the first output of `then_branch` is typed float tensor with shape [2] and the first output of `else_branch` is another float tensor with shape [3], If's first output should have (a) no shape set, or (b) a shape of rank 1 with neither `dim_value` nor `dim_param` set, or (c) a shape of rank 1 with a unique `dim_param`. In contrast, the first output cannot have the shape [2] since [2] and [3] are not compatible.
+        # output is variadic [1,infty) just use self.output to access whole list
+
+    def accept(self, visitor, network):
+        super(If, self).accept(visitor, network)
+        visitor.visit_if(self, network)
+
+    @classmethod
+    def create_op(cls, i_cond: str, o_outputs: str, else_branch: OnnxAttribute, then_branch: OnnxAttribute):
+        attributes = {
+            'else_branch': else_branch,
+            'then_branch': then_branch,
+        }
+        return cls([i_cond], [o_outputs], None, None, None, attributes, None)
+
+
+class Min(Operation):
     """
-Calculates the exponential of the given input tensor, element-wise.
+Element-wise min of each of the input tensors (with Numpy-style broadcasting support).
+All inputs and outputs must have the same data type.
+This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).
     """
 
     def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Exp, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # Input tensor
+        super(Min, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # List of tensors for min.
+        # input is variadic [1,infty) just use self.input to access whole list
+        # Output tensor.
+        self.o_min = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Min, self).accept(visitor, network)
+        visitor.visit_min(self, network)
+
+    @classmethod
+    def create_op(cls, i_data_0: str, o_min: str):
+        attributes = {
+        }
+        return cls([i_data_0], [o_min], None, None, None, attributes, None)
+
+
+class InstanceNormalization(Operation):
+    """
+Carries out instance normalization as described in the paper
+https://arxiv.org/abs/1607.08022.
+
+y = scale * (x - mean) / sqrt(variance + epsilon) + B,
+where mean and variance are computed per instance per channel.
+
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(InstanceNormalization, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.epsilon = self.attributes.get('epsilon')
+        # Input data tensor from the previous operator; dimensions for image case are (N x C x H x W), where N is the batch size, C is the number of channels, and H and W are the height and the width of the data. For non image case, the dimensions are in the form of (N x C x D1 x D2 ... Dn), where N is the batch size.
         self.i_input = self.input[0]
-        # The exponential of the input tensor computed element-wise
+        # The input 1-dimensional scale tensor of size C.
+        self.i_scale = self.input[1]
+        # The input 1-dimensional bias tensor of size C.
+        self.i_B = self.input[2]
+        # The output tensor of the same shape as input.
         self.o_output = self.output[0]
 
     def accept(self, visitor, network):
-        super(Exp, self).accept(visitor, network)
-        visitor.visit_exp(self, network)
+        super(InstanceNormalization, self).accept(visitor, network)
+        visitor.visit_instancenormalization(self, network)
 
     @classmethod
-    def create_op(cls, i_input: str, o_output: str):
+    def create_op(cls, i_input: str, i_scale: str, i_B: str, o_output: str, epsilon: OnnxAttribute):
         attributes = {
+            'epsilon': epsilon,
         }
-        return cls([i_input], [o_output], None, None, None, attributes, None)
+        return cls([i_input, i_scale, i_B], [o_output], None, None, None, attributes, None)
 
 
-class Equal(Operation):
+class Less(Operation):
     """
-Returns the tensor resulted from performing the `equal` logical operation
+Returns the tensor resulted from performing the `less` logical operation
 elementwise on the input tensors `A` and `B` (with Numpy-style broadcasting support).
 
 This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).
     """
 
     def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Equal, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        super(Less, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
         # First input operand for the logical operator.
         self.i_A = self.input[0]
         # Second input operand for the logical operator.
@@ -1072,8 +2203,8 @@ This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; fo
         self.o_C = self.output[0]
 
     def accept(self, visitor, network):
-        super(Equal, self).accept(visitor, network)
-        visitor.visit_equal(self, network)
+        super(Less, self).accept(visitor, network)
+        visitor.visit_less(self, network)
 
     @classmethod
     def create_op(cls, i_A: str, i_B: str, o_C: str):
@@ -1082,138 +2213,140 @@ This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; fo
         return cls([i_A, i_B], [o_C], None, None, None, attributes, None)
 
 
-class Not(Operation):
+class EyeLike(Operation):
     """
-Returns the negation of the input tensor element-wise.
+Generate a 2D tensor (matrix) with ones on the diagonal and zeros everywhere else. Only 2D
+tensors are supported, i.e. input T1 must be of rank 2. The shape of the output tensor is the
+same as the input tensor. The data type can be specified by the 'dtype' argument. If
+'dtype' is not specified, then the type of input tensor is used. By default, the main diagonal
+is populated with ones, but attribute 'k' can be used to populate upper or lower diagonals.
+The 'dtype' argument must be one of the data types specified in the 'DataType' enum field in the
+TensorProto message and be valid as an output type.
     """
 
     def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Not, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # Input tensor
-        self.i_X = self.input[0]
-        # Output tensor
-        self.o_Y = self.output[0]
+        super(EyeLike, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.dtype = self.attributes.get('dtype')
+        self.k = self.attributes.get('k')
+        # 2D input tensor to copy shape, and optionally, type information from.
+        self.i_input = self.input[0]
+        # Output tensor, same shape as input tensor T1.
+        self.o_output = self.output[0]
 
     def accept(self, visitor, network):
-        super(Not, self).accept(visitor, network)
-        visitor.visit_not(self, network)
+        super(EyeLike, self).accept(visitor, network)
+        visitor.visit_eyelike(self, network)
 
     @classmethod
-    def create_op(cls, i_X: str, o_Y: str):
+    def create_op(cls, i_input: str, o_output: str, dtype: OnnxAttribute, k: OnnxAttribute):
         attributes = {
+            'dtype': dtype,
+            'k': k,
         }
-        return cls([i_X], [o_Y], None, None, None, attributes, None)
+        return cls([i_input], [o_output], None, None, None, attributes, None)
 
 
-class Sqrt(Operation):
+class RandomNormal(Operation):
     """
-Square root takes one input data (Tensor<T>) and produces one output data
-(Tensor<T>) where the square root is, y = x^0.5, is applied to
-the tensor elementwise. If x is negative, then it will return NaN.
+Generate a tensor with random values drawn from a normal distribution. The shape
+of the tensor is specified by the `shape` argument and the parameter of the normal distribution
+specified by `mean` and `scale`.
+
+The data type is specified by the 'dtype' argument. The 'dtype' argument must
+be one of the data types specified in the 'DataType' enum field in the
+TensorProto message.
     """
 
     def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Sqrt, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # Input tensor
-        self.i_X = self.input[0]
-        # Output tensor
-        self.o_Y = self.output[0]
+        super(RandomNormal, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.dtype = self.attributes.get('dtype')
+        self.mean = self.attributes.get('mean')
+        self.scale = self.attributes.get('scale')
+        self.seed = self.attributes.get('seed')
+        self.shape = self.attributes.get('shape')
+        # Output tensor of random values drawn from normal distribution
+        self.o_output = self.output[0]
 
     def accept(self, visitor, network):
-        super(Sqrt, self).accept(visitor, network)
-        visitor.visit_sqrt(self, network)
+        super(RandomNormal, self).accept(visitor, network)
+        visitor.visit_randomnormal(self, network)
 
     @classmethod
-    def create_op(cls, i_X: str, o_Y: str):
+    def create_op(cls, o_output: str, dtype: OnnxAttribute, mean: OnnxAttribute, scale: OnnxAttribute, seed: OnnxAttribute, shape: OnnxAttribute):
         attributes = {
+            'dtype': dtype,
+            'mean': mean,
+            'scale': scale,
+            'seed': seed,
+            'shape': shape,
         }
-        return cls([i_X], [o_Y], None, None, None, attributes, None)
+        return cls([], [o_output], None, None, None, attributes, None)
 
 
-class Elu(Operation):
+class Slice(Operation):
     """
-Elu takes one input data (Tensor<T>) and produces one output data
-(Tensor<T>) where the function `f(x) = alpha * (exp(x) - 1.) for x <
-0`, `f(x) = x for x >= 0`., is applied to the tensor elementwise.
-
+Produces a slice of the input tensor along multiple axes. Similar to numpy:
+https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html
+Slices uses `starts`, `ends`, `axes` and `steps` inputs to specify the start and end
+dimension and step for each axis in the list of axes, it uses this information to
+slice the input `data` tensor. If a negative value is passed for any of the
+start or end indices, it represent number of elements before the end of that
+dimension. If the value passed to start or end is larger than the `n` (the
+number of elements in this dimension), it represents `n`. For slicing to the
+end of a dimension with unknown size, it is recommended to pass in `INT_MAX`.
+If a negative value is passed for step, it represents slicing backward.
+If `axes` are omitted, they are set to `[0, ..., ndim-1]`.
+If `steps` are omitted, they are set to `[1, ..., 1]` of length `len(starts)`
+Example 1:
+  data = [
+      [1, 2, 3, 4],
+      [5, 6, 7, 8],
+  ]
+  axes = [0, 1]
+  starts = [1, 0]
+  ends = [2, 3]
+  steps = [1, 2]
+  result = [
+      [5, 7],
+  ]
+Example 2:
+  data = [
+      [1, 2, 3, 4],
+      [5, 6, 7, 8],
+  ]
+  starts = [0, 1]
+  ends = [-1, 1000]
+  result = [
+      [2, 3, 4],
+  ]
     """
 
     def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Elu, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.alpha = self.attributes.get('alpha')
-        # 1D input tensor
-        self.i_X = self.input[0]
-        # 1D input tensor
-        self.o_Y = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Elu, self).accept(visitor, network)
-        visitor.visit_elu(self, network)
-
-    @classmethod
-    def create_op(cls, i_X: str, o_Y: str, alpha: OnnxAttribute):
-        attributes = {
-            'alpha': alpha,
-        }
-        return cls([i_X], [o_Y], None, None, None, attributes, None)
-
-
-class ReduceMin(Operation):
-    """
-Computes the min of the input tensor's element along the provided axes. The resulted
-tensor has the same rank as the input if keepdims equal 1. If keepdims equal 0, then
-the resulted tensor have the reduced dimension pruned.
-
-The above behavior is similar to numpy, with the exception that numpy default keepdims to
-False instead of True.    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(ReduceMin, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.axes = self.attributes.get('axes')
-        self.keepdims = self.attributes.get('keepdims')
-        # An input tensor.
+        super(Slice, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Tensor of data to extract slices from.
         self.i_data = self.input[0]
-        # Reduced output tensor.
-        self.o_reduced = self.output[0]
+        # 1-D tensor of starting indices of corresponding axis in `axes`
+        self.i_starts = self.input[1]
+        # 1-D tensor of ending indices (exclusive) of corresponding axis in `axes`
+        self.i_ends = self.input[2]
+        # 1-D tensor of axes that `starts` and `ends` apply to. Negative value means counting dimensions from the back. Accepted range is [-r, r-1] where r = rank(data).
+        # OPTIONAL
+        self.i_axes = None if len(self.input) < 4 else self.input[3]
+        # 1-D tensor of slice step of corresponding axis in `axes`. Default to 1. 
+        # OPTIONAL
+        self.i_steps = None if len(self.input) < 5 else self.input[4]
+        # Sliced data tensor.
+        self.o_output = self.output[0]
 
     def accept(self, visitor, network):
-        super(ReduceMin, self).accept(visitor, network)
-        visitor.visit_reducemin(self, network)
+        super(Slice, self).accept(visitor, network)
+        visitor.visit_slice(self, network)
 
     @classmethod
-    def create_op(cls, i_data: str, o_reduced: str, axes: OnnxAttribute, keepdims: OnnxAttribute):
-        attributes = {
-            'axes': axes,
-            'keepdims': keepdims,
-        }
-        return cls([i_data], [o_reduced], None, None, None, attributes, None)
-
-
-class Div(Operation):
-    """
-Performs element-wise binary division (with Numpy-style broadcasting support).
-
-This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Div, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # First operand.
-        self.i_A = self.input[0]
-        # Second operand.
-        self.i_B = self.input[1]
-        # Result, has same element type as two inputs
-        self.o_C = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Div, self).accept(visitor, network)
-        visitor.visit_div(self, network)
-
-    @classmethod
-    def create_op(cls, i_A: str, i_B: str, o_C: str):
+    def create_op(cls, i_data: str, i_starts: str, i_ends: str, i_axes: str, i_steps: str, o_output: str):
         attributes = {
         }
-        return cls([i_A, i_B], [o_C], None, None, None, attributes, None)
+        return cls([i_data, i_starts, i_ends, i_axes, i_steps], [o_output], None, None, None, attributes, None)
 
 
 class PRelu(Operation):
@@ -1243,142 +2376,45 @@ This operator supports **unidirectional broadcasting** (tensor slope should be u
         return cls([i_X, i_slope], [o_Y], None, None, None, attributes, None)
 
 
-class DepthToSpace(Operation):
-    """DepthToSpace rearranges (permutes) data from depth into blocks of spatial data.
-This is the reverse transformation of SpaceToDepth. More specifically, this op outputs a copy of
-the input tensor where values from the depth dimension are moved in spatial blocks to the height
-and width dimensions.
+class Log(Operation):
+    """
+Calculates the natural log of the given input tensor, element-wise.
     """
 
     def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(DepthToSpace, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.blocksize = self.attributes.get('blocksize')
-        # Input tensor of [N,C,H,W], where N is the batch axis, C is the channel or depth, H is the height and W is the width.
+        super(Log, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
         self.i_input = self.input[0]
-        # Output tensor of [N, C/(blocksize * blocksize), H * blocksize, W * blocksize].
+        # The natural log of the input tensor computed element-wise
         self.o_output = self.output[0]
 
     def accept(self, visitor, network):
-        super(DepthToSpace, self).accept(visitor, network)
-        visitor.visit_depthtospace(self, network)
+        super(Log, self).accept(visitor, network)
+        visitor.visit_log(self, network)
 
     @classmethod
-    def create_op(cls, i_input: str, o_output: str, blocksize: OnnxAttribute):
+    def create_op(cls, i_input: str, o_output: str):
         attributes = {
-            'blocksize': blocksize,
         }
         return cls([i_input], [o_output], None, None, None, attributes, None)
-
-
-class GRUUnit(Operation):
-    """
-GRUUnit computes the activations of a standard GRU,
-in a sequence-length aware fashion.
-Concretely, given the (fused) inputs X (TxNxD), the previous hidden
-state (NxD), and the sequence lengths (N), computes the GRU
-activations, avoiding computation if the input is invalid (as in, the
-value at X[t][n] >= seqLengths[n].
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(GRUUnit, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.drop_states = self.attributes.get('drop_states')
-        # The previous GRU hidden state.
-        self.i_hidden_prev = self.input[0]
-        # Unactivated gate outputs from forget, update, and output gates, pre-activation.
-        self.i_gates = self.input[1]
-        # Array of sequence lengths.  len(seq_lengths) should equal batch size N.
-        self.i_seq_lengths = self.input[2]
-        # The timestep for this operation.
-        self.i_t = self.input[3]
-        # The new GRU hidden state calculated by this op.
-        self.o_hidden = self.output[0]
-
-    def accept(self, visitor, network):
-        super(GRUUnit, self).accept(visitor, network)
-        visitor.visit_gruunit(self, network)
-
-    @classmethod
-    def create_op(cls, i_hidden_prev: str, i_gates: str, i_seq_lengths: str, i_t: str, o_hidden: str, drop_states: OnnxAttribute):
-        attributes = {
-            'drop_states': drop_states,
-        }
-        return cls([i_hidden_prev, i_gates, i_seq_lengths, i_t], [o_hidden], None, None, None, attributes, None)
-
-
-class ConvTranspose(Operation):
-    """
-The convolution transpose operator consumes an input tensor and a filter,
-and computes the output. 
-
-If the pads parameter is provided the shape of the output is calculated via the following equation:
-
-  output_shape[i] = stride[i] * (input_size[i] - 1) + output_padding[i] + kernel_shape[i] - pads[start_i] - pads[end_i]
-
-output_shape can also be explicitly specified in which case pads values are auto generated using these equations:
-
-  total_padding[i] = stride[i] * (input_size[i] - 1) + output_padding[i] + kernel_shape[i] - output_shape[i]
-  If (auto_pads != SAME_UPPER): pads[start_i] = total_padding[i]/2; pads[end_i] = total_padding[i] - (total_padding[i]/2)
-  Else: pads[start_i] = total_padding[i] - (total_padding[i]/2); pads[end_i] = (total_padding[i]/2).
-
-        """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(ConvTranspose, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.auto_pad = self.attributes.get('auto_pad')
-        self.dilations = self.attributes.get('dilations')
-        self.group = self.attributes.get('group')
-        self.kernel_shape = self.attributes.get('kernel_shape')
-        self.output_padding = self.attributes.get('output_padding')
-        self.output_shape = self.attributes.get('output_shape')
-        self.pads = self.attributes.get('pads')
-        self.strides = self.attributes.get('strides')
-        # Input data tensor from previous layer; has size (N x C x H x W), where N is the batch size, C is the number of channels, and H and W are the height and width. Note that this is for the 2D image.Otherwise the size is (N x D1 x D2 ... x Dn)
-        self.i_X = self.input[0]
-        # The weight tensor that will be used in the convolutions; has size (C x M x kH x kW), where C is the number of channels, and kH and kW are the height and width of the kernel, and M is the number of feature maps. For more than 2 dimensions, the weight shape will be (C x M x k1 x k2 x ... x kn), where (k1 x k2 x ... x kn) is the dimension of the kernel
-        self.i_W = self.input[1]
-        # Optional 1D bias to be added to the convolution, has size of C.
-        # OPTIONAL
-        self.i_B = None if len(self.input) < 3 else self.input[2]
-        # Output data tensor that contains the result of the convolution. The output dimensions are functions of the kernel size, stride size, and pad lengths.
-        self.o_Y = self.output[0]
-
-    def accept(self, visitor, network):
-        super(ConvTranspose, self).accept(visitor, network)
-        visitor.visit_convtranspose(self, network)
-
-    @classmethod
-    def create_op(cls, i_X: str, i_W: str, i_B: str, o_Y: str, auto_pad: OnnxAttribute, dilations: OnnxAttribute, group: OnnxAttribute, kernel_shape: OnnxAttribute, output_padding: OnnxAttribute, output_shape: OnnxAttribute, pads: OnnxAttribute, strides: OnnxAttribute):
-        attributes = {
-            'auto_pad': auto_pad,
-            'dilations': dilations,
-            'group': group,
-            'kernel_shape': kernel_shape,
-            'output_padding': output_padding,
-            'output_shape': output_shape,
-            'pads': pads,
-            'strides': strides,
-        }
-        return cls([i_X, i_W, i_B], [o_Y], None, None, None, attributes, None)
 
 
 class LogSoftmax(Operation):
     """
 The operator computes the logsoftmax (log of softmax) values for each layer in the batch
- of the given input. The input is a 2-D tensor (Tensor<float>) of size
-(batch_size x input_feature_dimensions). The output tensor has the same shape
-and contains the logsoftmax values of the corresponding input.
+ of the given input.
 
-X does not need to explicitly be a 2D vector; rather, it will be
+The input does not need to explicitly be a 2D vector; rather, it will be
 coerced into one. For an arbitrary n-dimensional tensor
-X \in [a_0, a_1, ..., a_{k-1}, a_k, ..., a_{n-1}] and k is
-the axis provided, then X will be coerced into a 2-dimensional tensor with
+input \in [a_0, a_1, ..., a_{k-1}, a_k, ..., a_{n-1}] and k is
+the axis provided, then input will be coerced into a 2-dimensional tensor with
 dimensions [a_0 * ... * a_{k-1}, a_k * ... * a_{n-1}]. For the default
-case where axis=1, this means the X tensor will be coerced into a 2D tensor
+case where axis=1, this means the input tensor will be coerced into a 2D tensor
 of dimensions [a_0, a_1 * ... * a_{n-1}], where a_0 is often the batch size.
 In this situation, we must have a_0 = N and a_1 * ... * a_{n-1} = D.
 Each of these dimensions must be matched correctly, or else the operator
-will throw errors.
+will throw errors. The output tensor has the same shape
+and contains the logsoftmax values of the corresponding input.
     """
 
     def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
@@ -1386,7 +2422,7 @@ will throw errors.
         self.axis = self.attributes.get('axis')
         # The input tensor that's coerced into a 2D matrix of size (NxD) as described above.
         self.i_input = self.input[0]
-        # The output values with the same shape as input tensor.
+        # The output values with the same shape as input tensor (the original size without coercion).
         self.o_output = self.output[0]
 
     def accept(self, visitor, network):
@@ -1397,210 +2433,6 @@ will throw errors.
     def create_op(cls, i_input: str, o_output: str, axis: OnnxAttribute):
         attributes = {
             'axis': axis,
-        }
-        return cls([i_input], [o_output], None, None, None, attributes, None)
-
-
-class ReduceLogSum(Operation):
-    """
-Computes the log sum of the input tensor's element along the provided axes. The resulted
-tensor has the same rank as the input if keepdims equal 1. If keepdims equal 0, then
-the resulted tensor have the reduced dimension pruned.
-
-The above behavior is similar to numpy, with the exception that numpy default keepdims to
-False instead of True.    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(ReduceLogSum, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.axes = self.attributes.get('axes')
-        self.keepdims = self.attributes.get('keepdims')
-        # An input tensor.
-        self.i_data = self.input[0]
-        # Reduced output tensor.
-        self.o_reduced = self.output[0]
-
-    def accept(self, visitor, network):
-        super(ReduceLogSum, self).accept(visitor, network)
-        visitor.visit_reducelogsum(self, network)
-
-    @classmethod
-    def create_op(cls, i_data: str, o_reduced: str, axes: OnnxAttribute, keepdims: OnnxAttribute):
-        attributes = {
-            'axes': axes,
-            'keepdims': keepdims,
-        }
-        return cls([i_data], [o_reduced], None, None, None, attributes, None)
-
-
-class ReduceMean(Operation):
-    """
-Computes the mean of the input tensor's element along the provided axes. The resulted
-tensor has the same rank as the input if keepdims equal 1. If keepdims equal 0, then
-the resulted tensor have the reduced dimension pruned.
-
-The above behavior is similar to numpy, with the exception that numpy default keepdims to
-False instead of True.    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(ReduceMean, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.axes = self.attributes.get('axes')
-        self.keepdims = self.attributes.get('keepdims')
-        # An input tensor.
-        self.i_data = self.input[0]
-        # Reduced output tensor.
-        self.o_reduced = self.output[0]
-
-    def accept(self, visitor, network):
-        super(ReduceMean, self).accept(visitor, network)
-        visitor.visit_reducemean(self, network)
-
-    @classmethod
-    def create_op(cls, i_data: str, o_reduced: str, axes: OnnxAttribute, keepdims: OnnxAttribute):
-        attributes = {
-            'axes': axes,
-            'keepdims': keepdims,
-        }
-        return cls([i_data], [o_reduced], None, None, None, attributes, None)
-
-
-class Crop(Operation):
-    """Crop and image to the specified spatial dimensions. If scale is given,
-then optionally start the crop offset by the left/top border amounts.
-If scale is not provided, crop the borders as provided.    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Crop, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.border = self.attributes.get('border')
-        self.scale = self.attributes.get('scale')
-        # Input tensor of shape [N,C,H,W]
-        self.i_input = self.input[0]
-        # Result, has same type as input, with H and W dimensions reduced.
-        self.o_output = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Crop, self).accept(visitor, network)
-        visitor.visit_crop(self, network)
-
-    @classmethod
-    def create_op(cls, i_input: str, o_output: str, border: OnnxAttribute, scale: OnnxAttribute):
-        attributes = {
-            'border': border,
-            'scale': scale,
-        }
-        return cls([i_input], [o_output], None, None, None, attributes, None)
-
-
-class And(Operation):
-    """
-Returns the tensor resulted from performing the `and` logical operation
-elementwise on the input tensors `A` and `B` (with Numpy-style broadcasting support).
-
-This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(And, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # First input operand for the logical operator.
-        self.i_A = self.input[0]
-        # Second input operand for the logical operator.
-        self.i_B = self.input[1]
-        # Result tensor.
-        self.o_C = self.output[0]
-
-    def accept(self, visitor, network):
-        super(And, self).accept(visitor, network)
-        visitor.visit_and(self, network)
-
-    @classmethod
-    def create_op(cls, i_A: str, i_B: str, o_C: str):
-        attributes = {
-        }
-        return cls([i_A, i_B], [o_C], None, None, None, attributes, None)
-
-
-class ReduceMax(Operation):
-    """
-Computes the max of the input tensor's element along the provided axes. The resulted
-tensor has the same rank as the input if keepdims equal 1. If keepdims equal 0, then
-the resulted tensor have the reduced dimension pruned.
-
-The above behavior is similar to numpy, with the exception that numpy default keepdims to
-False instead of True.    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(ReduceMax, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.axes = self.attributes.get('axes')
-        self.keepdims = self.attributes.get('keepdims')
-        # An input tensor.
-        self.i_data = self.input[0]
-        # Reduced output tensor.
-        self.o_reduced = self.output[0]
-
-    def accept(self, visitor, network):
-        super(ReduceMax, self).accept(visitor, network)
-        visitor.visit_reducemax(self, network)
-
-    @classmethod
-    def create_op(cls, i_data: str, o_reduced: str, axes: OnnxAttribute, keepdims: OnnxAttribute):
-        attributes = {
-            'axes': axes,
-            'keepdims': keepdims,
-        }
-        return cls([i_data], [o_reduced], None, None, None, attributes, None)
-
-
-class ArgMax(Operation):
-    """
-Computes the indices of the max elements of the input tensor's element along the 
-provided axis. The resulted tensor has the same rank as the input if keepdims equal 1.
-If keepdims equal 0, then the resulted tensor have the reduced dimension pruned. 
-The type of the output tensor is integer.    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(ArgMax, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.axis = self.attributes.get('axis')
-        self.keepdims = self.attributes.get('keepdims')
-        # An input tensor.
-        self.i_data = self.input[0]
-        # Reduced output tensor with integer data type.
-        self.o_reduced = self.output[0]
-
-    def accept(self, visitor, network):
-        super(ArgMax, self).accept(visitor, network)
-        visitor.visit_argmax(self, network)
-
-    @classmethod
-    def create_op(cls, i_data: str, o_reduced: str, axis: OnnxAttribute, keepdims: OnnxAttribute):
-        attributes = {
-            'axis': axis,
-            'keepdims': keepdims,
-        }
-        return cls([i_data], [o_reduced], None, None, None, attributes, None)
-
-
-class LpNormalization(Operation):
-    """
-Given a matrix, apply Lp-normalization along the provided axis.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(LpNormalization, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.axis = self.attributes.get('axis')
-        self.p = self.attributes.get('p')
-        # Input matrix
-        self.i_input = self.input[0]
-        # Matrix after normalization
-        self.o_output = self.output[0]
-
-    def accept(self, visitor, network):
-        super(LpNormalization, self).accept(visitor, network)
-        visitor.visit_lpnormalization(self, network)
-
-    @classmethod
-    def create_op(cls, i_input: str, o_output: str, axis: OnnxAttribute, p: OnnxAttribute):
-        attributes = {
-            'axis': axis,
-            'p': p,
         }
         return cls([i_input], [o_output], None, None, None, attributes, None)
 
@@ -1720,21 +2552,17 @@ Frontends should emit multi-layer RNNs as a series of While operators (with
 time being the inner looping dimension), with each successive layer consuming
 the scan_outputs from the previous layer, possibly going through several
 point-wise operators (e.g. dropout, residual connections, linear layer).
-Concretely, the (possibly transformed) scan_outputs are referenced by the
-subsequent layer as a LoopIndexTensor operating on a value in scope, not
-necessarily a loop-carried dependency. Backends can recognize this pattern and
-are permitted to schedule the execution of the multi-layer network in a
-pipelined/"wavefront" fashion.
-
     """
 
     def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
         super(Loop, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
         self.body = self.attributes.get('body')
-        # A maximum trip-count for the loop specified at runtime. Optional. pass empty string to skip.
-        self.i_M = self.input[0]
-        # A boolean termination condition. Pass empty string to skip.
-        self.i_cond = self.input[1]
+        # A maximum trip-count for the loop specified at runtime. Optional. Pass empty string to skip.
+        # OPTIONAL
+        self.i_M = None if len(self.input) < 1 else self.input[0]
+        # A boolean termination condition. Optional. Pass empty string to skip.
+        # OPTIONAL
+        self.i_cond = None if len(self.input) < 2 else self.input[1]
         # The initial values of any loop-carried dependencies (values that change across loop iterations)
         # input is variadic [1,infty) just use self.input to access whole list
         # Final N loop carried dependency values then K scan_outputs
@@ -1752,528 +2580,31 @@ pipelined/"wavefront" fashion.
         return cls([i_M, i_cond, i_v_initial], [o_v_final_and_scan_outputs], None, None, None, attributes, None)
 
 
-class Affine(Operation):
+class LpNormalization(Operation):
     """
-Affine takes one input data (Tensor<T>) and produces one output data
-(Tensor<T>) where the affine function, y = alpha * x + beta,
-is applied to the tensor elementwise.
+Given a matrix, apply Lp-normalization along the provided axis.
     """
 
     def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Affine, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.alpha = self.attributes.get('alpha')
-        self.beta = self.attributes.get('beta')
-        # 1D input tensor
-        self.i_X = self.input[0]
-        # 1D output tensor
-        self.o_Y = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Affine, self).accept(visitor, network)
-        visitor.visit_affine(self, network)
-
-    @classmethod
-    def create_op(cls, i_X: str, o_Y: str, alpha: OnnxAttribute, beta: OnnxAttribute):
-        attributes = {
-            'alpha': alpha,
-            'beta': beta,
-        }
-        return cls([i_X], [o_Y], None, None, None, attributes, None)
-
-
-class LSTM(Operation):
-    """
-Computes an one-layer LSTM. This operator is usually supported via some
-custom implementation such as CuDNN.
-
-Notations:
-
-`X` - input tensor
-
-`i` - input gate
-
-`o` - output gate
-
-`f` - forget gate
-
-`c` - cell gate
-
-`t` - time step (t-1 means previous time step)
-
-`W[iofc]` - W parameter weight matrix for input, output, forget, and cell gates
-
-`R[iofc]` - R recurrence weight matrix for input, output, forget, and cell gates
-
-`Wb[iofc]` - W bias vectors for input, output, forget, and cell gates
-
-`Rb[iofc]` - R bias vectors for input, output, forget, and cell gates
-
-`P[iof]`  - P peephole weight vector for input, output, and forget gates
-
-`WB[iofc]` - W parameter weight matrix for backward input, output, forget, and cell gates
-
-`RB[iofc]` - R recurrence weight matrix for backward input, output, forget, and cell gates
-
-`WBb[iofc]` - W bias vectors for backward input, output, forget, and cell gates
-
-`RBb[iofc]` - R bias vectors for backward input, output, forget, and cell gates
-
-`PB[iof]`  - P peephole weight vector for backward input, output, and forget gates
-
-`H` - Hidden state
-
-`num_directions` - 2 if direction == bidirectional else 1
-
-Activation functions:
-
-  Relu(x)                - max(0, x)
-
-  Tanh(x)                - (1 - e^{-2x})/(1 + e^{-2x})
-
-  Sigmoid(x)             - 1/(1 + e^{-x})
-
-  (NOTE: Below are optional)
-
-  Affine(x)              - alpha*x + beta
-
-  LeakyRelu(x)           - x if x >= 0 else alpha * x
-
-  ThresholdedRelu(x)     - x if x >= alpha else 0
-
-  ScaledTanh(x)          - alpha*Tanh(beta*x)
-
-  HardSigmoid(x)         - min(max(alpha*x + beta, 0), 1)
-
-  Elu(x)                 - x if x >= 0 else alpha*(e^x - 1)
-
-  Softsign(x)            - x/(1 + |x|)
-
-  Softplus(x)            - log(1 + e^x)
-
-Equations (Default: f=Sigmoid, g=Tanh, h=Tanh):
-
-  - it = f(Xt*(Wi^T) + Ht-1*Ri + Pi (.) Ct-1 + Wbi + Rbi)
-
-  - ft = f(Xt*(Wf^T) + Ht-1*Rf + Pf (.) Ct-1 + Wbf + Rbf)
-
-  - ct = g(Xt*(Wc^T) + Ht-1*Rc + Wbc + Rbc)
-
-  - Ct = ft (.) Ct-1 + it (.) ct
-
-  - ot = f(Xt*(Wo^T) + Ht-1*Ro + Po (.) Ct + Wbo + Rbo)
-
-  - Ht = ot (.) h(Ct)
-This operator has **optional** inputs/outputs. See [the doc](IR.md) for more details about the representation of optional arguments. An empty string may be used in the place of an actual argument's name to indicate a missing argument. Trailing optional arguments (those not followed by an argument that is present) may also be simply omitted.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(LSTM, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.activation_alpha = self.attributes.get('activation_alpha')
-        self.activation_beta = self.attributes.get('activation_beta')
-        self.activations = self.attributes.get('activations')
-        self.clip = self.attributes.get('clip')
-        self.direction = self.attributes.get('direction')
-        self.hidden_size = self.attributes.get('hidden_size')
-        self.input_forget = self.attributes.get('input_forget')
-        # The input sequences packed (and potentially padded) into one 3-D tensor with the shape of `[seq_length, batch_size, input_size]`.
-        self.i_X = self.input[0]
-        # The weight tensor for the gates. Concatenation of `W[iofc]` and `WB[iofc]` (if bidirectional) along dimension 0. The tensor has shape `[num_directions, 4*hidden_size, input_size]`.
-        self.i_W = self.input[1]
-        # The recurrence weight tensor. Concatenation of `R[iofc]` and `RB[iofc]` (if bidirectional) along dimension 0. This tensor has shape `[num_directions, 4*hidden_size, hidden_size]`.
-        self.i_R = self.input[2]
-        # The bias tensor for input gate. Concatenation of `[Wb[iofc], Rb[iofc]]`, and `[WBb[iofc], RBb[iofc]]` (if bidirectional) along dimension 0. This tensor has shape `[num_directions, 8*hidden_size]`. Optional: If not specified - assumed to be 0.
-        # OPTIONAL
-        self.i_B = None if len(self.input) < 4 else self.input[3]
-        # Optional tensor specifying lengths of the sequences in a batch. If not specified - assumed all sequences in the batch to have length `seq_length`. It has shape `[batch_size]`.
-        # OPTIONAL
-        self.i_sequence_lens = None if len(self.input) < 5 else self.input[4]
-        # Optional initial value of the hidden. If not specified - assumed to be 0. It has shape `[num_directions, batch_size, hidden_size]`.
-        # OPTIONAL
-        self.i_initial_h = None if len(self.input) < 6 else self.input[5]
-        # Optional initial value of the cell. If not specified - assumed to be 0. It has shape `[num_directions, batch_size, hidden_size]`.
-        # OPTIONAL
-        self.i_initial_c = None if len(self.input) < 7 else self.input[6]
-        # The weight tensor for peepholes. Concatenation of `P[iof]` and `PB[iof]` (if bidirectional) along dimension 0. It has shape `[num_directions, 3*hidde_size]`. Optional: If not specified - assumed to be 0.
-        # OPTIONAL
-        self.i_P = None if len(self.input) < 8 else self.input[7]
-        # A tensor that concats all the intermediate output values of the hidden. It has shape `[seq_length, num_directions, batch_size, hidden_size]`. 
-        # OPTIONAL
-        self.o_Y = None if len(self.output) < 1 else self.output[0]
-        # The last output value of the hidden. It has shape `[num_directions, batch_size, hidden_size]`.
-        # OPTIONAL
-        self.o_Y_h = None if len(self.output) < 2 else self.output[1]
-        # The last output value of the cell. It has shape `[num_directions, batch_size, hidden_size]`.
-        # OPTIONAL
-        self.o_Y_c = None if len(self.output) < 3 else self.output[2]
-
-    def accept(self, visitor, network):
-        super(LSTM, self).accept(visitor, network)
-        visitor.visit_lstm(self, network)
-
-    @classmethod
-    def create_op(cls, i_X: str, i_W: str, i_R: str, i_B: str, i_sequence_lens: str, i_initial_h: str, i_initial_c: str, i_P: str, o_Y: str, o_Y_h: str, o_Y_c: str, activation_alpha: OnnxAttribute, activation_beta: OnnxAttribute, activations: OnnxAttribute, clip: OnnxAttribute, direction: OnnxAttribute, hidden_size: OnnxAttribute, input_forget: OnnxAttribute):
-        attributes = {
-            'activation_alpha': activation_alpha,
-            'activation_beta': activation_beta,
-            'activations': activations,
-            'clip': clip,
-            'direction': direction,
-            'hidden_size': hidden_size,
-            'input_forget': input_forget,
-        }
-        return cls([i_X, i_W, i_R, i_B, i_sequence_lens, i_initial_h, i_initial_c, i_P], [o_Y, o_Y_h, o_Y_c], None, None, None, attributes, None)
-
-
-class Softplus(Operation):
-    """
-Softplus takes one input data (Tensor<T>) and produces one output data
-(Tensor<T>) where the softplus function, y = ln(exp(x) + 1), is applied to
-the tensor elementwise.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Softplus, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # 1D input tensor
-        self.i_X = self.input[0]
-        # 1D input tensor
-        self.o_Y = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Softplus, self).accept(visitor, network)
-        visitor.visit_softplus(self, network)
-
-    @classmethod
-    def create_op(cls, i_X: str, o_Y: str):
-        attributes = {
-        }
-        return cls([i_X], [o_Y], None, None, None, attributes, None)
-
-
-class RandomNormalLike(Operation):
-    """
-Generate a tensor with random values drawn from a normal distribution. 
-The shape of the output tensor is copied from the shape of the input tensor, 
-and the parameters of the normal distribution are specified by `mean` and `scale`.
-
-The data type is specified by the 'dtype' argument, or copied from the input tensor if not provided. 
-The 'dtype' argument must be one of the data types specified in the 'DataType' enum field in the
-TensorProto message, and be valid as an output type.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(RandomNormalLike, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.dtype = self.attributes.get('dtype')
-        self.mean = self.attributes.get('mean')
-        self.scale = self.attributes.get('scale')
-        self.seed = self.attributes.get('seed')
-        # Input tensor to copy shape and optionally type information from.
+        super(LpNormalization, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axis = self.attributes.get('axis')
+        self.p = self.attributes.get('p')
+        # Input matrix
         self.i_input = self.input[0]
-        # Output tensor of random values drawn from normal distribution
+        # Matrix after normalization
         self.o_output = self.output[0]
 
     def accept(self, visitor, network):
-        super(RandomNormalLike, self).accept(visitor, network)
-        visitor.visit_randomnormallike(self, network)
+        super(LpNormalization, self).accept(visitor, network)
+        visitor.visit_lpnormalization(self, network)
 
     @classmethod
-    def create_op(cls, i_input: str, o_output: str, dtype: OnnxAttribute, mean: OnnxAttribute, scale: OnnxAttribute, seed: OnnxAttribute):
-        attributes = {
-            'dtype': dtype,
-            'mean': mean,
-            'scale': scale,
-            'seed': seed,
-        }
-        return cls([i_input], [o_output], None, None, None, attributes, None)
-
-
-class ArgMin(Operation):
-    """
-Computes the indices of the min elements of the input tensor's element along the 
-provided axis. The resulted tensor has the same rank as the input if keepdims equal 1.
-If keepdims equal 0, then the resulted tensor have the reduced dimension pruned. 
-The type of the output tensor is integer.    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(ArgMin, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.axis = self.attributes.get('axis')
-        self.keepdims = self.attributes.get('keepdims')
-        # An input tensor.
-        self.i_data = self.input[0]
-        # Reduced output tensor with integer data type.
-        self.o_reduced = self.output[0]
-
-    def accept(self, visitor, network):
-        super(ArgMin, self).accept(visitor, network)
-        visitor.visit_argmin(self, network)
-
-    @classmethod
-    def create_op(cls, i_data: str, o_reduced: str, axis: OnnxAttribute, keepdims: OnnxAttribute):
+    def create_op(cls, i_input: str, o_output: str, axis: OnnxAttribute, p: OnnxAttribute):
         attributes = {
             'axis': axis,
-            'keepdims': keepdims,
-        }
-        return cls([i_data], [o_reduced], None, None, None, attributes, None)
-
-
-class Conv(Operation):
-    """
-The convolution operator consumes an input tensor and a filter, and
-computes the output.    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Conv, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.auto_pad = self.attributes.get('auto_pad')
-        self.dilations = self.attributes.get('dilations')
-        self.group = self.attributes.get('group')
-        self.kernel_shape = self.attributes.get('kernel_shape')
-        self.pads = self.attributes.get('pads')
-        self.strides = self.attributes.get('strides')
-        # Input data tensor from previous layer; has size (N x C x H x W), where N is the batch size, C is the number of channels, and H and W are the height and width. Note that this is for the 2D image. Otherwise the size is (N x C x D1 x D2 ... x Dn). Optionally, if dimension denotation is in effect, the operation expects input data tensor to arrive with the dimension denotation of [DATA_BATCH, DATA_CHANNEL, DATA_FEATURE, DATA_FEATURE ...].
-        self.i_X = self.input[0]
-        # The weight tensor that will be used in the convolutions; has size (M x C x kH x kW), where C is the number of channels, and kH and kW are the height and width of the kernel, and M is the number of feature maps. For more than 2 dimensions, the kernel shape will be (M x C x k1 x k2 x ... x kn), where (k1 x k2 x ... kn) is the dimension of the kernel. Optionally, if dimension denotation is in effect, the operation expects the weight tensor to arrive with the dimension denotation of [FILTER_IN_CHANNEL, FILTER_OUT_CHANNEL, FILTER_SPATIAL, FILTER_SPATIAL ...].
-        self.i_W = self.input[1]
-        # Optional 1D bias to be added to the convolution, has size of M.
-        # OPTIONAL
-        self.i_B = None if len(self.input) < 3 else self.input[2]
-        # Output data tensor that contains the result of the convolution. The output dimensions are functions of the kernel size, stride size, and pad lengths.
-        self.o_Y = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Conv, self).accept(visitor, network)
-        visitor.visit_conv(self, network)
-
-    @classmethod
-    def create_op(cls, i_X: str, i_W: str, i_B: str, o_Y: str, auto_pad: OnnxAttribute, dilations: OnnxAttribute, group: OnnxAttribute, kernel_shape: OnnxAttribute, pads: OnnxAttribute, strides: OnnxAttribute):
-        attributes = {
-            'auto_pad': auto_pad,
-            'dilations': dilations,
-            'group': group,
-            'kernel_shape': kernel_shape,
-            'pads': pads,
-            'strides': strides,
-        }
-        return cls([i_X, i_W, i_B], [o_Y], None, None, None, attributes, None)
-
-
-class Add(Operation):
-    """
-Performs element-wise binary addition (with Numpy-style broadcasting support).
-
-This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Add, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # First operand.
-        self.i_A = self.input[0]
-        # Second operand.
-        self.i_B = self.input[1]
-        # Result, has same element type as two inputs
-        self.o_C = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Add, self).accept(visitor, network)
-        visitor.visit_add(self, network)
-
-    @classmethod
-    def create_op(cls, i_A: str, i_B: str, o_C: str):
-        attributes = {
-        }
-        return cls([i_A, i_B], [o_C], None, None, None, attributes, None)
-
-
-class Abs(Operation):
-    """
-Absolute takes one input data (Tensor<T>) and produces one output data
-(Tensor<T>) where the absolute is, y = abs(x), is applied to
-the tensor elementwise.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Abs, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # Input tensor
-        self.i_X = self.input[0]
-        # Output tensor
-        self.o_Y = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Abs, self).accept(visitor, network)
-        visitor.visit_abs(self, network)
-
-    @classmethod
-    def create_op(cls, i_X: str, o_Y: str):
-        attributes = {
-        }
-        return cls([i_X], [o_Y], None, None, None, attributes, None)
-
-
-class Split(Operation):
-    """Split a tensor into a list of tensors, along the specified
-'axis'. Lengths of the parts can be specified using argument 'split'.
-Otherwise, the tensor is split to equal sized parts.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Split, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.axis = self.attributes.get('axis')
-        self.split = self.attributes.get('split')
-        # The tensor to split
-        self.i_input = self.input[0]
-        # One or more outputs forming list of tensors after splitting
-        # output is variadic [1,infty) just use self.output to access whole list
-
-    def accept(self, visitor, network):
-        super(Split, self).accept(visitor, network)
-        visitor.visit_split(self, network)
-
-    @classmethod
-    def create_op(cls, i_input: str, o_outputs: str, axis: OnnxAttribute, split: OnnxAttribute):
-        attributes = {
-            'axis': axis,
-            'split': split,
-        }
-        return cls([i_input], [o_outputs], None, None, None, attributes, None)
-
-
-class BatchNormalization(Operation):
-    """
-Carries out batch normalization as described in the paper
-https://arxiv.org/abs/1502.03167. Depending on the mode it is being run,
-there are multiple cases for the number of outputs, which we list below:
-
-Output case #1: Y, mean, var, saved_mean, saved_var (training mode)
-Output case #2: Y (test mode)
-    This operator has **optional** inputs/outputs. See [the doc](IR.md) for more details about the representation of optional arguments. An empty string may be used in the place of an actual argument's name to indicate a missing argument. Trailing optional arguments (those not followed by an argument that is present) may also be simply omitted.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(BatchNormalization, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.epsilon = self.attributes.get('epsilon')
-        self.momentum = self.attributes.get('momentum')
-        self.spatial = self.attributes.get('spatial')
-        # Input data tensor from the previous operator; dimensions for image case are (N x C x H x W), where N is the batch size, C is the number of channels, and H and W are the height and the width of the data. For non image case, the dimensions are in the form of (N x C x D1 x D2 ... Dn), where N is the batch size.
-        self.i_X = self.input[0]
-        # The scale as a 1-dimensional tensor of size C to be applied to the output.
-        self.i_scale = self.input[1]
-        # The bias as a 1-dimensional tensor of size C to be applied to the output.
-        self.i_B = self.input[2]
-        # The running mean (training) or the estimated mean (testing) as a 1-dimensional tensor of size C.
-        self.i_mean = self.input[3]
-        # The running variance (training) or the estimated variance (testing) as a 1-dimensional tensor of size C.
-        self.i_var = self.input[4]
-        # The output tensor of the same shape as X.
-        self.o_Y = self.output[0]
-        # The running mean after the BatchNormalization operator.
-        # OPTIONAL
-        self.o_mean = None if len(self.output) < 2 else self.output[1]
-        # The running variance after the BatchNormalization operator.
-        # OPTIONAL
-        self.o_var = None if len(self.output) < 3 else self.output[2]
-        # Saved mean used during training to speed up gradient computation.
-        # OPTIONAL
-        self.o_saved_mean = None if len(self.output) < 4 else self.output[3]
-        # Saved variance used during training to speed up gradient computation.
-        # OPTIONAL
-        self.o_saved_var = None if len(self.output) < 5 else self.output[4]
-
-    def accept(self, visitor, network):
-        super(BatchNormalization, self).accept(visitor, network)
-        visitor.visit_batchnormalization(self, network)
-
-    @classmethod
-    def create_op(cls, i_X: str, i_scale: str, i_B: str, i_mean: str, i_var: str, o_Y: str, o_mean: str, o_var: str, o_saved_mean: str, o_saved_var: str, epsilon: OnnxAttribute, momentum: OnnxAttribute, spatial: OnnxAttribute):
-        attributes = {
-            'epsilon': epsilon,
-            'momentum': momentum,
-            'spatial': spatial,
-        }
-        return cls([i_X, i_scale, i_B, i_mean, i_var], [o_Y, o_mean, o_var, o_saved_mean, o_saved_var], None, None, None, attributes, None)
-
-
-class Upsample(Operation):
-    """
-Upsample the input tensor.
-Each dimension value of the output tensor is:
-  output_dimension = floor(input_dimension * scale).
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Upsample, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.mode = self.attributes.get('mode')
-        self.scales = self.attributes.get('scales')
-        # N-D tensor
-        self.i_X = self.input[0]
-        # N-D tensor after resizing
-        self.o_Y = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Upsample, self).accept(visitor, network)
-        visitor.visit_upsample(self, network)
-
-    @classmethod
-    def create_op(cls, i_X: str, o_Y: str, mode: OnnxAttribute, scales: OnnxAttribute):
-        attributes = {
-            'mode': mode,
-            'scales': scales,
-        }
-        return cls([i_X], [o_Y], None, None, None, attributes, None)
-
-
-class GlobalLpPool(Operation):
-    """
- GlobalLpPool consumes an input tensor X and applies lp pool pooling across the
- the values in the same channel. This is equivalent to LpPool with kernel size
- equal to the spatial dimension of input tensor.    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(GlobalLpPool, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.p = self.attributes.get('p')
-        # Input data tensor from the previous operator; dimensions for image case are (N x C x H x W), where N is the batch size, C is the number of channels, and H and W are the height and the width of the data. For non image case, the dimensions are in the form of (N x C x D1 x D2 ... Dn), where N is the batch size.
-        self.i_X = self.input[0]
-        # Output data tensor from pooling across the input tensor. Dimensions will be N x C x 1 x 1
-        self.o_Y = self.output[0]
-
-    def accept(self, visitor, network):
-        super(GlobalLpPool, self).accept(visitor, network)
-        visitor.visit_globallppool(self, network)
-
-    @classmethod
-    def create_op(cls, i_X: str, o_Y: str, p: OnnxAttribute):
-        attributes = {
             'p': p,
         }
-        return cls([i_X], [o_Y], None, None, None, attributes, None)
-
-
-class ReduceLogSumExp(Operation):
-    """
-Computes the log sum exponent of the input tensor's element along the provided axes. The resulted
-tensor has the same rank as the input if keepdims equal 1. If keepdims equal 0, then
-the resulted tensor have the reduced dimension pruned.
-
-The above behavior is similar to numpy, with the exception that numpy default keepdims to
-False instead of True.    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(ReduceLogSumExp, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.axes = self.attributes.get('axes')
-        self.keepdims = self.attributes.get('keepdims')
-        # An input tensor.
-        self.i_data = self.input[0]
-        # Reduced output tensor.
-        self.o_reduced = self.output[0]
-
-    def accept(self, visitor, network):
-        super(ReduceLogSumExp, self).accept(visitor, network)
-        visitor.visit_reducelogsumexp(self, network)
-
-    @classmethod
-    def create_op(cls, i_data: str, o_reduced: str, axes: OnnxAttribute, keepdims: OnnxAttribute):
-        attributes = {
-            'axes': axes,
-            'keepdims': keepdims,
-        }
-        return cls([i_data], [o_reduced], None, None, None, attributes, None)
+        return cls([i_input], [o_output], None, None, None, attributes, None)
 
 
 class MatMul(Operation):
@@ -2301,1025 +2632,49 @@ Matrix product that behaves like numpy.matmul: https://docs.scipy.org/doc/numpy-
         return cls([i_A, i_B], [o_Y], None, None, None, attributes, None)
 
 
-class Sub(Operation):
+class ReduceL2(Operation):
     """
-Performs element-wise binary subtraction (with Numpy-style broadcasting support).
+Computes the L2 norm of the input tensor's element along the provided axes. The resulted
+tensor has the same rank as the input if keepdims equal 1. If keepdims equal 0, then
+the resulted tensor have the reduced dimension pruned.
 
-This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).
-    """
+The above behavior is similar to numpy, with the exception that numpy default keepdims to
+False instead of True.    """
 
     def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Sub, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # First operand.
-        self.i_A = self.input[0]
-        # Second operand.
-        self.i_B = self.input[1]
-        # Result, has same element type as two inputs
-        self.o_C = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Sub, self).accept(visitor, network)
-        visitor.visit_sub(self, network)
-
-    @classmethod
-    def create_op(cls, i_A: str, i_B: str, o_C: str):
-        attributes = {
-        }
-        return cls([i_A, i_B], [o_C], None, None, None, attributes, None)
-
-
-class MaxPool(Operation):
-    """
- MaxPool consumes an input tensor X and applies max pooling across the
- the tensor according to kernel sizes, stride sizes, and pad lengths.
- max pooling consisting of computing the max on all values of a
- subset of the input tensor according to the kernel size and downsampling the
- data into the output tensor Y for further processing. The output spatial shape will be following:
- ```
- output_spatial_shape[i] = floor((input_spatial_shape[i] + pad_shape[i] - kernel_spatial_shape[i]) / strides_spatial_shape[i] + 1)
-
- * pad_shape[i] is sum of pads along axis i
- ```
-
- `auto_pad` is a DEPRECATED attribute. If you are using them currently, the output spatial shape will be following:
- ```
- VALID: output_spatial_shape[i] = ceil((input_spatial_shape[i] - kernel_spatial_shape[i] + 1) / strides_spatial_shape[i])
- SAME_UPPER or SAME_LOWER: output_spatial_shape[i] = ceil(input_spatial_shape[i] / strides_spatial_shape[i])
- ```
- And pad shape will be following if `SAME_UPPER` or `SAME_LOWER`:
- ```
- pad_shape[i] = (output_spatial_shape[i] - 1) * strides_spatial_shape[i] + kernel_spatial_shape[i] - input_spatial_shape[i]
- ```
- The output of each pooling window is maximum number of elements exclude pad.
-     """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(MaxPool, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.auto_pad = self.attributes.get('auto_pad')
-        self.kernel_shape = self.attributes.get('kernel_shape')
-        self.pads = self.attributes.get('pads')
-        self.strides = self.attributes.get('strides')
-        # Input data tensor from the previous operator; dimensions for image case are (N x C x H x W), where N is the batch size, C is the number of channels, and H and W are the height and the width of the data. For non image case, the dimensions are in the form of (N x C x D1 x D2 ... Dn), where N is the batch size. Optionally, if dimension denotation is in effect, the operation expects the input data tensor to arrive with the dimension denotation of [DATA_BATCH, DATA_CHANNEL, DATA_FEATURE, DATA_FEATURE ...].
-        self.i_X = self.input[0]
-        # Output data tensor from average or max pooling across the input tensor. Dimensions will vary based on various kernel, stride, and pad sizes. Floor value of the dimension is used
-        self.o_Y = self.output[0]
-
-    def accept(self, visitor, network):
-        super(MaxPool, self).accept(visitor, network)
-        visitor.visit_maxpool(self, network)
-
-    @classmethod
-    def create_op(cls, i_X: str, o_Y: str, auto_pad: OnnxAttribute, kernel_shape: OnnxAttribute, pads: OnnxAttribute, strides: OnnxAttribute):
-        attributes = {
-            'auto_pad': auto_pad,
-            'kernel_shape': kernel_shape,
-            'pads': pads,
-            'strides': strides,
-        }
-        return cls([i_X], [o_Y], None, None, None, attributes, None)
-
-
-class Neg(Operation):
-    """
-Neg takes one input data (Tensor<T>) and produces one output data
-(Tensor<T>) where each element flipped sign, y = -x, is applied to
-the tensor elementwise.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Neg, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # Input tensor
-        self.i_X = self.input[0]
-        # Output tensor
-        self.o_Y = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Neg, self).accept(visitor, network)
-        visitor.visit_neg(self, network)
-
-    @classmethod
-    def create_op(cls, i_X: str, o_Y: str):
-        attributes = {
-        }
-        return cls([i_X], [o_Y], None, None, None, attributes, None)
-
-
-class Xor(Operation):
-    """
-Returns the tensor resulted from performing the `xor` logical operation
-elementwise on the input tensors `A` and `B` (with Numpy-style broadcasting support).
-
-This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Xor, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # First input operand for the logical operator.
-        self.i_A = self.input[0]
-        # Second input operand for the logical operator.
-        self.i_B = self.input[1]
-        # Result tensor.
-        self.o_C = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Xor, self).accept(visitor, network)
-        visitor.visit_xor(self, network)
-
-    @classmethod
-    def create_op(cls, i_A: str, i_B: str, o_C: str):
-        attributes = {
-        }
-        return cls([i_A, i_B], [o_C], None, None, None, attributes, None)
-
-
-class Greater(Operation):
-    """
-Returns the tensor resulted from performing the `greater` logical operation
-elementwise on the input tensors `A` and `B` (with Numpy-style broadcasting support).
-
-This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Greater, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # First input operand for the logical operator.
-        self.i_A = self.input[0]
-        # Second input operand for the logical operator.
-        self.i_B = self.input[1]
-        # Result tensor.
-        self.o_C = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Greater, self).accept(visitor, network)
-        visitor.visit_greater(self, network)
-
-    @classmethod
-    def create_op(cls, i_A: str, i_B: str, o_C: str):
-        attributes = {
-        }
-        return cls([i_A, i_B], [o_C], None, None, None, attributes, None)
-
-
-class Dropout(Operation):
-    """
-Dropout takes one input data (Tensor<float>) and produces two Tensor outputs,
-output (Tensor<float>) and mask (Tensor<bool>). Depending on whether it is in
-test mode or not, the output Y will either be a random dropout, or a simple
-copy of the input. Note that our implementation of Dropout does scaling in
-the training phase, so during testing nothing needs to be done.
-This operator has **optional** inputs/outputs. See [the doc](IR.md) for more details about the representation of optional arguments. An empty string may be used in the place of an actual argument's name to indicate a missing argument. Trailing optional arguments (those not followed by an argument that is present) may also be simply omitted.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Dropout, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.ratio = self.attributes.get('ratio')
-        # The input data as Tensor.
+        super(ReduceL2, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axes = self.attributes.get('axes')
+        self.keepdims = self.attributes.get('keepdims')
+        # An input tensor.
         self.i_data = self.input[0]
-        # The output.
-        self.o_output = self.output[0]
-        # The output mask.
-        # OPTIONAL
-        self.o_mask = None if len(self.output) < 2 else self.output[1]
+        # Reduced output tensor.
+        self.o_reduced = self.output[0]
 
     def accept(self, visitor, network):
-        super(Dropout, self).accept(visitor, network)
-        visitor.visit_dropout(self, network)
+        super(ReduceL2, self).accept(visitor, network)
+        visitor.visit_reducel2(self, network)
 
     @classmethod
-    def create_op(cls, i_data: str, o_output: str, o_mask: str, ratio: OnnxAttribute):
+    def create_op(cls, i_data: str, o_reduced: str, axes: OnnxAttribute, keepdims: OnnxAttribute):
         attributes = {
-            'ratio': ratio,
+            'axes': axes,
+            'keepdims': keepdims,
         }
-        return cls([i_data], [o_output, o_mask], None, None, None, attributes, None)
-
-
-class Cast(Operation):
-    """
-The operator casts the elements of a given input tensor to a data type
-specified by the 'to' argument and returns an output tensor of the same size in
-the converted type. The 'to' argument must be one of the data types specified
-in the 'DataType' enum field in the TensorProto message.
-NOTE: Casting to and from strings is not supported yet.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Cast, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.to = self.attributes.get('to')
-        # Input tensor to be cast.
-        self.i_input = self.input[0]
-        # Output tensor with the same shape as input with type specified by the 'to' argument
-        self.o_output = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Cast, self).accept(visitor, network)
-        visitor.visit_cast(self, network)
-
-    @classmethod
-    def create_op(cls, i_input: str, o_output: str, to: OnnxAttribute):
-        attributes = {
-            'to': to,
-        }
-        return cls([i_input], [o_output], None, None, None, attributes, None)
-
-
-class Gather(Operation):
-    """
-Given `data` tensor of rank r >= 1, and `indices` tensor of rank q, gather
-entries of the axis dimension of `data` (by default outer-most one as axis=0) indexed by `indices`, and concatenates
-them in an output tensor of rank q + (r - 1).
-Example 1:
-  data = [
-      [1.0, 1.2],
-      [2.3, 3.4],
-      [4.5, 5.7],
-  ]
-  indices = [
-      [0, 1],
-      [1, 2],
-  ]
-  output = [
-      [
-          [1.0, 1.2],
-          [2.3, 3.4],
-      ],
-      [
-          [2.3, 3.4],
-          [4.5, 5.7],
-      ],
-  ]
-Example 2:
-  data = [
-      [1.0, 1.2, 1.9],
-      [2.3, 3.4, 3.9],
-      [4.5, 5.7, 5.9],
-  ]
-  indices = [
-      [0, 2],
-  ]
-  axis = 1,
-  output = [
-      [
-          [1.0, 1.9],
-          [2.3, 3.9],
-          [4.5, 5.9],
-      ],
-  ]
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Gather, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.axis = self.attributes.get('axis')
-        # Tensor of rank r >= 1.
-        self.i_data = self.input[0]
-        # Tensor of int32/int64 indices, of any rank q.
-        self.i_indices = self.input[1]
-        # Tensor of rank q + (r - 1).
-        self.o_output = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Gather, self).accept(visitor, network)
-        visitor.visit_gather(self, network)
-
-    @classmethod
-    def create_op(cls, i_data: str, i_indices: str, o_output: str, axis: OnnxAttribute):
-        attributes = {
-            'axis': axis,
-        }
-        return cls([i_data, i_indices], [o_output], None, None, None, attributes, None)
-
-
-class Ceil(Operation):
-    """
-Ceil takes one input data (Tensor<T>) and produces one output data
-(Tensor<T>) where the ceil is, y = ceil(x), is applied to
-the tensor elementwise.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Ceil, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # Input tensor
-        self.i_X = self.input[0]
-        # Output tensor
-        self.o_Y = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Ceil, self).accept(visitor, network)
-        visitor.visit_ceil(self, network)
-
-    @classmethod
-    def create_op(cls, i_X: str, o_Y: str):
-        attributes = {
-        }
-        return cls([i_X], [o_Y], None, None, None, attributes, None)
-
-
-class Concat(Operation):
-    """Concatenate a list of tensors into a single tensor    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Concat, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.axis = self.attributes.get('axis')
-        # List of tensors for concatenation
-        # input is variadic [1,infty) just use self.input to access whole list
-        # Concatenated tensor
-        self.o_concat_result = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Concat, self).accept(visitor, network)
-        visitor.visit_concat(self, network)
-
-    @classmethod
-    def create_op(cls, i_inputs: str, o_concat_result: str, axis: OnnxAttribute):
-        attributes = {
-            'axis': axis,
-        }
-        return cls([i_inputs], [o_concat_result], None, None, None, attributes, None)
-
-
-class Softsign(Operation):
-    """
-Calculates the softsign (x/(1+|x|)) of the given input tensor element-wise.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Softsign, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # Input tensor
-        self.i_input = self.input[0]
-        # The softsign (x/(1+|x|)) values of the input tensor computed element-wise
-        self.o_output = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Softsign, self).accept(visitor, network)
-        visitor.visit_softsign(self, network)
-
-    @classmethod
-    def create_op(cls, i_input: str, o_output: str):
-        attributes = {
-        }
-        return cls([i_input], [o_output], None, None, None, attributes, None)
-
-
-class ConstantFill(Operation):
-    """
-The operator fills the elements of the output tensor with a constant value
-specified by the 'value' attribute.
-
-The data type is specified by the 'dtype' attribute. The 'dtype' attribute must
-be one of the data types specified in the 'DataType' enum field in the
-TensorProto message. If the 'dtype' attribute is not provided, the data type of
-'value' is used.
-
-The output tensor shape is specified by the 'shape' attribute. If the number of
-input is 1, the shape will be identical to that of the input at run time with
-optional additional dimensions appended at the end as specified by 'extra_shape'
-attribute. In that case the 'shape' attribute should not be set.
-
-If input_as_shape is set to true, then the input should be a 1D tensor
-containing the desired output shape (the dimensions specified in extra_shape
-will also be appended)
-
-NOTE: Currently, it supports data type of float, int32, int64, and bool.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(ConstantFill, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.dtype = self.attributes.get('dtype')
-        self.extra_shape = self.attributes.get('extra_shape')
-        self.input_as_shape = self.attributes.get('input_as_shape')
-        self.shape = self.attributes.get('shape')
-        self.value = self.attributes.get('value')
-        # Input tensor (optional) to provide shape information.
-        # OPTIONAL
-        self.i_input = None if len(self.input) < 1 else self.input[0]
-        # Output tensor of constant values specified by 'value'argument and its type is specified by the 'dtype' argument
-        self.o_output = self.output[0]
-
-    def accept(self, visitor, network):
-        super(ConstantFill, self).accept(visitor, network)
-        visitor.visit_constantfill(self, network)
-
-    @classmethod
-    def create_op(cls, i_input: str, o_output: str, dtype: OnnxAttribute, extra_shape: OnnxAttribute, input_as_shape: OnnxAttribute, shape: OnnxAttribute, value: OnnxAttribute):
-        attributes = {
-            'dtype': dtype,
-            'extra_shape': extra_shape,
-            'input_as_shape': input_as_shape,
-            'shape': shape,
-            'value': value,
-        }
-        return cls([i_input], [o_output], None, None, None, attributes, None)
-
-
-class Hardmax(Operation):
-    """
-The operator computes the hardmax (1 for the first maximum value, and 0 for all others) values for each layer in the batch
- of the given input. The input is a 2-D tensor (Tensor<float>) of size
-(batch_size x input_feature_dimensions). The output tensor has the same shape
-and contains the hardmax values of the corresponding input.
-
-X does not need to explicitly be a 2D vector; rather, it will be
-coerced into one. For an arbitrary n-dimensional tensor
-X \in [a_0, a_1, ..., a_{k-1}, a_k, ..., a_{n-1}] and k is
-the axis provided, then X will be coerced into a 2-dimensional tensor with
-dimensions [a_0 * ... * a_{k-1}, a_k * ... * a_{n-1}]. For the default
-case where axis=1, this means the X tensor will be coerced into a 2D tensor
-of dimensions [a_0, a_1 * ... * a_{n-1}], where a_0 is often the batch size.
-In this situation, we must have a_0 = N and a_1 * ... * a_{n-1} = D.
-Each of these dimensions must be matched correctly, or else the operator
-will throw errors.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Hardmax, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.axis = self.attributes.get('axis')
-        # The input tensor that's coerced into a 2D matrix of size (NxD) as described above.
-        self.i_input = self.input[0]
-        # The output values with the same shape as input tensor.
-        self.o_output = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Hardmax, self).accept(visitor, network)
-        visitor.visit_hardmax(self, network)
-
-    @classmethod
-    def create_op(cls, i_input: str, o_output: str, axis: OnnxAttribute):
-        attributes = {
-            'axis': axis,
-        }
-        return cls([i_input], [o_output], None, None, None, attributes, None)
-
-
-class Identity(Operation):
-    """Identity operator    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Identity, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # Input tensor
-        self.i_input = self.input[0]
-        # Tensor to copy input into.
-        self.o_output = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Identity, self).accept(visitor, network)
-        visitor.visit_identity(self, network)
-
-    @classmethod
-    def create_op(cls, i_input: str, o_output: str):
-        attributes = {
-        }
-        return cls([i_input], [o_output], None, None, None, attributes, None)
-
-
-class If(Operation):
-    """If conditional    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(If, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.else_branch = self.attributes.get('else_branch')
-        self.then_branch = self.attributes.get('then_branch')
-        # Condition for the if
-        self.i_cond = self.input[0]
-        # Values that are live-out to the enclosing scope.
-        # output is variadic [1,infty) just use self.output to access whole list
-
-    def accept(self, visitor, network):
-        super(If, self).accept(visitor, network)
-        visitor.visit_if(self, network)
-
-    @classmethod
-    def create_op(cls, i_cond: str, o_outputs: str, else_branch: OnnxAttribute, then_branch: OnnxAttribute):
-        attributes = {
-            'else_branch': else_branch,
-            'then_branch': then_branch,
-        }
-        return cls([i_cond], [o_outputs], None, None, None, attributes, None)
-
-
-class ImageScaler(Operation):
-    """Scale and bias the input image. Bias values are stored in
-the same ordering as the image pixel format.    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(ImageScaler, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.bias = self.attributes.get('bias')
-        self.scale = self.attributes.get('scale')
-        # Input tensor of shape [N,C,H,W]
-        self.i_input = self.input[0]
-        # Result, has same shape and type as input
-        self.o_output = self.output[0]
-
-    def accept(self, visitor, network):
-        super(ImageScaler, self).accept(visitor, network)
-        visitor.visit_imagescaler(self, network)
-
-    @classmethod
-    def create_op(cls, i_input: str, o_output: str, bias: OnnxAttribute, scale: OnnxAttribute):
-        attributes = {
-            'bias': bias,
-            'scale': scale,
-        }
-        return cls([i_input], [o_output], None, None, None, attributes, None)
-
-
-class RandomUniform(Operation):
-    """
-Generate a tensor with random values drawn from a uniform distribution. The shape
-of the tensor is specified by the `shape` argument and the range by `low` and `high`.
-
-The data type is specified by the 'dtype' argument. The 'dtype' argument must
-be one of the data types specified in the 'DataType' enum field in the
-TensorProto message.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(RandomUniform, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.dtype = self.attributes.get('dtype')
-        self.high = self.attributes.get('high')
-        self.low = self.attributes.get('low')
-        self.seed = self.attributes.get('seed')
-        self.shape = self.attributes.get('shape')
-        # Output tensor of random values drawn from uniform distribution
-        self.o_output = self.output[0]
-
-    def accept(self, visitor, network):
-        super(RandomUniform, self).accept(visitor, network)
-        visitor.visit_randomuniform(self, network)
-
-    @classmethod
-    def create_op(cls, o_output: str, dtype: OnnxAttribute, high: OnnxAttribute, low: OnnxAttribute, seed: OnnxAttribute, shape: OnnxAttribute):
-        attributes = {
-            'dtype': dtype,
-            'high': high,
-            'low': low,
-            'seed': seed,
-            'shape': shape,
-        }
-        return cls([], [o_output], None, None, None, attributes, None)
-
-
-class Cos(Operation):
-    """
-Calculates the cosine of the given input tensor, element-wise.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Cos, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # Input tensor
-        self.i_input = self.input[0]
-        # The cosine of the input tensor computed element-wise
-        self.o_output = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Cos, self).accept(visitor, network)
-        visitor.visit_cos(self, network)
-
-    @classmethod
-    def create_op(cls, i_input: str, o_output: str):
-        attributes = {
-        }
-        return cls([i_input], [o_output], None, None, None, attributes, None)
-
-
-class Gemm(Operation):
-    """General Matrix multiplication:
-https://en.wikipedia.org/wiki/Basic_Linear_Algebra_Subprograms#Level_3
-
-A' = transpose(A) if transA else A
-
-B' = transpose(B) if transB else B
-
-Compute Y = alpha * A' * B' + beta * C, where input tensor A has shape (M, K) or (K, M),
-input tensor B has shape (K, N) or (N, K), input tensor C is broadcastable to shape (M, N),
-and output tensor Y has shape (M, N). A will be transposed before doing the
-computation if attribute transA is non-zero, same for B and transB.
-This operator supports **unidirectional broadcasting** (tensor C should be unidirectional broadcastable to tensor A * B); for more details please check [the doc](Broadcasting.md).    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Gemm, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.alpha = self.attributes.get('alpha')
-        self.beta = self.attributes.get('beta')
-        self.transA = self.attributes.get('transA')
-        self.transB = self.attributes.get('transB')
-        # Input tensor A. The shape of A should be (M, K) if transA is 0, or (K, M) if transA is non-zero.
-        self.i_A = self.input[0]
-        # Input tensor B. The shape of B should be (K, N) if transB is 0, or (N, K) if transB is non-zero.
-        self.i_B = self.input[1]
-        # Input tensor C. The shape of C should be unidirectional broadcastable to (M, N).
-        self.i_C = self.input[2]
-        # Output tensor of shape (M, N).
-        self.o_Y = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Gemm, self).accept(visitor, network)
-        visitor.visit_gemm(self, network)
-
-    @classmethod
-    def create_op(cls, i_A: str, i_B: str, i_C: str, o_Y: str, alpha: OnnxAttribute, beta: OnnxAttribute, transA: OnnxAttribute, transB: OnnxAttribute):
-        attributes = {
-            'alpha': alpha,
-            'beta': beta,
-            'transA': transA,
-            'transB': transB,
-        }
-        return cls([i_A, i_B, i_C], [o_Y], None, None, None, attributes, None)
-
-
-class InstanceNormalization(Operation):
-    """
-Carries out instance normalization as described in the paper
-https://arxiv.org/abs/1607.08022.
-
-y = scale * (x - mean) / sqrt(variance + epsilon) + B,
-where mean and variance are computed per instance per channel.
-
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(InstanceNormalization, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.epsilon = self.attributes.get('epsilon')
-        # Input data tensor from the previous operator; dimensions for image case are (N x C x H x W), where N is the batch size, C is the number of channels, and H and W are the height and the width of the data. For non image case, the dimensions are in the form of (N x C x D1 x D2 ... Dn), where N is the batch size.
-        self.i_input = self.input[0]
-        # The input 1-dimensional scale tensor of size C.
-        self.i_scale = self.input[1]
-        # The input 1-dimensional bias tensor of size C.
-        self.i_B = self.input[2]
-        # The output tensor of the same shape as input.
-        self.o_output = self.output[0]
-
-    def accept(self, visitor, network):
-        super(InstanceNormalization, self).accept(visitor, network)
-        visitor.visit_instancenormalization(self, network)
-
-    @classmethod
-    def create_op(cls, i_input: str, i_scale: str, i_B: str, o_output: str, epsilon: OnnxAttribute):
-        attributes = {
-            'epsilon': epsilon,
-        }
-        return cls([i_input, i_scale, i_B], [o_output], None, None, None, attributes, None)
-
-
-class Relu(Operation):
-    """
-Relu takes one input data (Tensor<T>) and produces one output data
-(Tensor<T>) where the rectified linear function, y = max(0, x), is applied to
-the tensor elementwise.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Relu, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # Input tensor
-        self.i_X = self.input[0]
-        # Output tensor
-        self.o_Y = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Relu, self).accept(visitor, network)
-        visitor.visit_relu(self, network)
-
-    @classmethod
-    def create_op(cls, i_X: str, o_Y: str):
-        attributes = {
-        }
-        return cls([i_X], [o_Y], None, None, None, attributes, None)
-
-
-class AveragePool(Operation):
-    """
- AveragePool consumes an input tensor X and applies average pooling across the
- the tensor according to kernel sizes, stride sizes, and pad lengths.
- average pooling consisting of computing the average on all values of a
- subset of the input tensor according to the kernel size and downsampling the
- data into the output tensor Y for further processing. The output spatial shape will be following:
- ```
- output_spatial_shape[i] = floor((input_spatial_shape[i] + pad_shape[i] - kernel_spatial_shape[i]) / strides_spatial_shape[i] + 1)
-
- * pad_shape[i] is sum of pads along axis i
- ```
-
- `auto_pad` is a DEPRECATED attribute. If you are using them currently, the output spatial shape will be following:
- ```
- VALID: output_spatial_shape[i] = ceil((input_spatial_shape[i] - kernel_spatial_shape[i] + 1) / strides_spatial_shape[i])
- SAME_UPPER or SAME_LOWER: output_spatial_shape[i] = ceil(input_spatial_shape[i] / strides_spatial_shape[i])
- ```
- And pad shape will be following if `SAME_UPPER` or `SAME_LOWER`:
- ```
- pad_shape[i] = (output_spatial_shape[i] - 1) * strides_spatial_shape[i] + kernel_spatial_shape[i] - input_spatial_shape[i]
- ```
- The output of each pooling window is divided by the number of elements (exclude pad when attribute count_include_pad is zero).
-     """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(AveragePool, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.auto_pad = self.attributes.get('auto_pad')
-        self.count_include_pad = self.attributes.get('count_include_pad')
-        self.kernel_shape = self.attributes.get('kernel_shape')
-        self.pads = self.attributes.get('pads')
-        self.strides = self.attributes.get('strides')
-        # Input data tensor from the previous operator; dimensions for image case are (N x C x H x W), where N is the batch size, C is the number of channels, and H and W are the height and the width of the data. For non image case, the dimensions are in the form of (N x C x D1 x D2 ... Dn), where N is the batch size. Optionally, if dimension denotation is in effect, the operation expects the input data tensor to arrive with the dimension denotation of [DATA_BATCH, DATA_CHANNEL, DATA_FEATURE, DATA_FEATURE ...].
-        self.i_X = self.input[0]
-        # Output data tensor from average or max pooling across the input tensor. Dimensions will vary based on various kernel, stride, and pad sizes. Floor value of the dimension is used
-        self.o_Y = self.output[0]
-
-    def accept(self, visitor, network):
-        super(AveragePool, self).accept(visitor, network)
-        visitor.visit_averagepool(self, network)
-
-    @classmethod
-    def create_op(cls, i_X: str, o_Y: str, auto_pad: OnnxAttribute, count_include_pad: OnnxAttribute, kernel_shape: OnnxAttribute, pads: OnnxAttribute, strides: OnnxAttribute):
-        attributes = {
-            'auto_pad': auto_pad,
-            'count_include_pad': count_include_pad,
-            'kernel_shape': kernel_shape,
-            'pads': pads,
-            'strides': strides,
-        }
-        return cls([i_X], [o_Y], None, None, None, attributes, None)
-
-
-class Less(Operation):
-    """
-Returns the tensor resulted from performing the `less` logical operation
-elementwise on the input tensors `A` and `B` (with Numpy-style broadcasting support).
-
-This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Less, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # First input operand for the logical operator.
-        self.i_A = self.input[0]
-        # Second input operand for the logical operator.
-        self.i_B = self.input[1]
-        # Result tensor.
-        self.o_C = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Less, self).accept(visitor, network)
-        visitor.visit_less(self, network)
-
-    @classmethod
-    def create_op(cls, i_A: str, i_B: str, o_C: str):
-        attributes = {
-        }
-        return cls([i_A, i_B], [o_C], None, None, None, attributes, None)
-
-
-class Log(Operation):
-    """
-Calculates the natural log of the given input tensor, element-wise.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Log, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # Input tensor
-        self.i_input = self.input[0]
-        # The natural log of the input tensor computed element-wise
-        self.o_output = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Log, self).accept(visitor, network)
-        visitor.visit_log(self, network)
-
-    @classmethod
-    def create_op(cls, i_input: str, o_output: str):
-        attributes = {
-        }
-        return cls([i_input], [o_output], None, None, None, attributes, None)
-
-
-class LoopIndexTensor(Operation):
-    """This is a special operator only valid inside the loop that supports the common case behavior of accessing the correct element of the input sequence in an RNN. This operator MUST be directly given the passed-in iteration number to the body of a Loop graph. This signals to back-ends that this is a direct indexing operation, with no transforms applied to the index.    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(LoopIndexTensor, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.axis = self.attributes.get('axis')
-        # Tensor to be indexed (has N dimensions)
-        self.i_T = self.input[0]
-        # Loop index provided as input to the body graph
-        self.i_loop_idx = self.input[1]
-        # Tensor of N - 1 dims that is a sub tensor of T
-        self.o_O = self.output[0]
-
-    def accept(self, visitor, network):
-        super(LoopIndexTensor, self).accept(visitor, network)
-        visitor.visit_loopindextensor(self, network)
-
-    @classmethod
-    def create_op(cls, i_T: str, i_loop_idx: str, o_O: str, axis: OnnxAttribute):
-        attributes = {
-            'axis': axis,
-        }
-        return cls([i_T, i_loop_idx], [o_O], None, None, None, attributes, None)
-
-
-class Floor(Operation):
-    """
-Floor takes one input data (Tensor<T>) and produces one output data
-(Tensor<T>) where the floor is, y = floor(x), is applied to
-the tensor elementwise.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Floor, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # Input tensor
-        self.i_X = self.input[0]
-        # Output tensor
-        self.o_Y = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Floor, self).accept(visitor, network)
-        visitor.visit_floor(self, network)
-
-    @classmethod
-    def create_op(cls, i_X: str, o_Y: str):
-        attributes = {
-        }
-        return cls([i_X], [o_Y], None, None, None, attributes, None)
-
-
-class Min(Operation):
-    """
-Element-wise min of each of the input tensors. All inputs and outputs must
-have the same shape and data type.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Min, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # List of tensors for Min
-        # input is variadic [1,infty) just use self.input to access whole list
-        # Output tensor. Same dimension as inputs.
-        self.o_min = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Min, self).accept(visitor, network)
-        visitor.visit_min(self, network)
-
-    @classmethod
-    def create_op(cls, i_data_0: str, o_min: str):
-        attributes = {
-        }
-        return cls([i_data_0], [o_min], None, None, None, attributes, None)
-
-
-class RNN(Operation):
-    """
-Computes an one-layer simple RNN. This operator is usually supported
-via some custom implementation such as CuDNN.
-
-Notations:
-
-`X` - input tensor
-
-`i` - input gate
-
-`t` - time step (t-1 means previous time step)
-
-`Wi` - W parameter weight matrix for input gate
-
-`Ri` - R recurrence weight matrix for input gate
-
-`Wbi` - W parameter bias vector for input gate
-
-`Rbi` - R parameter bias vector for input gate
-
-`WBi` - W parameter weight matrix for backward input gate
-
-`RBi` - R recurrence weight matrix for backward input gate
-
-`WBbi` - WR bias vectors for backward input gate
-
-`RBbi` - RR bias vectors for backward input gate
-
-`H` - Hidden state
-
-`num_directions` - 2 if direction == bidirectional else 1
-
-Activation functions:
-
-  Relu(x)                - max(0, x)
-
-  Tanh(x)                - (1 - e^{-2x})/(1 + e^{-2x})
-
-  Sigmoid(x)             - 1/(1 + e^{-x})
-
-  (NOTE: Below are optional)
-
-  Affine(x)              - alpha*x + beta
-
-  LeakyRelu(x)           - x if x >= 0 else alpha * x
-
-  ThresholdedRelu(x)     - x if x >= alpha else 0
-
-  ScaledTanh(x)          - alpha*Tanh(beta*x)
-
-  HardSigmoid(x)         - min(max(alpha*x + beta, 0), 1)
-
-  Elu(x)                 - x if x >= 0 else alpha*(e^x - 1)
-
-  Softsign(x)            - x/(1 + |x|)
-
-  Softplus(x)            - log(1 + e^x)
-
-Equations (Default: f=Tanh):
-
-  - Ht = f(Xt*(Wi^T) + Ht-1*Ri + Wbi + Rbi)
-This operator has **optional** inputs/outputs. See [the doc](IR.md) for more details about the representation of optional arguments. An empty string may be used in the place of an actual argument's name to indicate a missing argument. Trailing optional arguments (those not followed by an argument that is present) may also be simply omitted.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(RNN, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.activation_alpha = self.attributes.get('activation_alpha')
-        self.activation_beta = self.attributes.get('activation_beta')
-        self.activations = self.attributes.get('activations')
-        self.clip = self.attributes.get('clip')
-        self.direction = self.attributes.get('direction')
-        self.hidden_size = self.attributes.get('hidden_size')
-        # The input sequences packed (and potentially padded) into one 3-D tensor with the shape of `[seq_length, batch_size, input_size]`.
-        self.i_X = self.input[0]
-        # The weight tensor for input gate. Concatenation of `Wi` and `WBi` (if bidirectional). The tensor has shape `[num_directions, hidden_size, input_size]`.
-        self.i_W = self.input[1]
-        # The recurrence weight tensor. Concatenation of `Ri` and `RBi` (if bidirectional). The tensor has shape `[num_directions, hidden_size, hidden_size]`.
-        self.i_R = self.input[2]
-        # The bias tensor for input gate. Concatenation of `[Wbi, Rbi]` and `[WBbi, RBbi]` (if bidirectional). The tensor has shape `[num_directions, 2*hidden_size]`. Optional: If not specified - assumed to be 0.
-        # OPTIONAL
-        self.i_B = None if len(self.input) < 4 else self.input[3]
-        # Optional tensor specifying lengths of the sequences in a batch. If not specified - assumed all sequences in the batch to have length `seq_length`. It has shape `[batch_size]`.
-        # OPTIONAL
-        self.i_sequence_lens = None if len(self.input) < 5 else self.input[4]
-        # Optional initial value of the hidden. If not specified - assumed to be 0. It has shape `[num_directions, batch_size, hidden_size]`.
-        # OPTIONAL
-        self.i_initial_h = None if len(self.input) < 6 else self.input[5]
-        # A tensor that concats all the intermediate output values of the hidden. It has shape `[seq_length, num_directions, batch_size, hidden_size]`. 
-        # OPTIONAL
-        self.o_Y = None if len(self.output) < 1 else self.output[0]
-        # The last output value of the hidden. It has shape `[num_directions, batch_size, hidden_size]`.
-        # OPTIONAL
-        self.o_Y_h = None if len(self.output) < 2 else self.output[1]
-
-    def accept(self, visitor, network):
-        super(RNN, self).accept(visitor, network)
-        visitor.visit_rnn(self, network)
-
-    @classmethod
-    def create_op(cls, i_X: str, i_W: str, i_R: str, i_B: str, i_sequence_lens: str, i_initial_h: str, o_Y: str, o_Y_h: str, activation_alpha: OnnxAttribute, activation_beta: OnnxAttribute, activations: OnnxAttribute, clip: OnnxAttribute, direction: OnnxAttribute, hidden_size: OnnxAttribute):
-        attributes = {
-            'activation_alpha': activation_alpha,
-            'activation_beta': activation_beta,
-            'activations': activations,
-            'clip': clip,
-            'direction': direction,
-            'hidden_size': hidden_size,
-        }
-        return cls([i_X, i_W, i_R, i_B, i_sequence_lens, i_initial_h], [o_Y, o_Y_h], None, None, None, attributes, None)
-
-
-class LpPool(Operation):
-    """
- LpPool consumes an input tensor X and applies Lp pooling across the
- the tensor according to kernel sizes, stride sizes, and pad lengths.
- Lp pooling consisting of computing the Lp norm on all values of a subset
- of the input tensor according to the kernel size and downsampling the
- data into the output tensor Y for further processing.    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(LpPool, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.auto_pad = self.attributes.get('auto_pad')
-        self.kernel_shape = self.attributes.get('kernel_shape')
-        self.p = self.attributes.get('p')
-        self.pads = self.attributes.get('pads')
-        self.strides = self.attributes.get('strides')
-        # Input data tensor from the previous operator; dimensions for image case are (N x C x H x W), where N is the batch size, C is the number of channels, and H and W are the height and the width of the data. For non image case, the dimensions are in the form of (N x C x D1 x D2 ... Dn), where N is the batch size.
-        self.i_X = self.input[0]
-        # Output data tensor from Lp pooling across the input tensor. Dimensions will vary based on various kernel, stride, and pad sizes.
-        self.o_Y = self.output[0]
-
-    def accept(self, visitor, network):
-        super(LpPool, self).accept(visitor, network)
-        visitor.visit_lppool(self, network)
-
-    @classmethod
-    def create_op(cls, i_X: str, o_Y: str, auto_pad: OnnxAttribute, kernel_shape: OnnxAttribute, p: OnnxAttribute, pads: OnnxAttribute, strides: OnnxAttribute):
-        attributes = {
-            'auto_pad': auto_pad,
-            'kernel_shape': kernel_shape,
-            'p': p,
-            'pads': pads,
-            'strides': strides,
-        }
-        return cls([i_X], [o_Y], None, None, None, attributes, None)
+        return cls([i_data], [o_reduced], None, None, None, attributes, None)
 
 
 class Max(Operation):
     """
-Element-wise max of each of the input tensors. All inputs and outputs must
-have the same shape and data type.
+Element-wise max of each of the input tensors (with Numpy-style broadcasting support).
+All inputs and outputs must have the same data type.
+This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).
     """
 
     def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
         super(Max, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # List of tensors for Max.
+        # List of tensors for max.
         # input is variadic [1,infty) just use self.input to access whole list
-        # Output tensor. Same dimension as inputs.
+        # Output tensor.
         self.o_max = self.output[0]
 
     def accept(self, visitor, network):
@@ -3363,165 +2718,6 @@ class MaxRoiPool(Operation):
         return cls([i_X, i_rois], [o_Y], None, None, None, attributes, None)
 
 
-class LRN(Operation):
-    """
-Local Response Normalization proposed in the [AlexNet paper](https://papers.nips.cc/paper/4824-imagenet-classification-with-deep-convolutional-neural-networks.pdf).
-It normalizes over local input regions.
-The local region is defined across the channels. For an element X[n, c, d1, ..., dk] in a tensor
-of shape (N x C x D1 x D2, ..., Dk), its region is
-{X[n, i, d1, ..., dk] | max(0, c - floor((size - 1) / 2)) <= i <= min(C - 1, c + ceil((size - 1) / 2))}.
-
-square_sum[n, c, d1, ..., dk] = sum(X[n, i, d1, ..., dk] ^ 2),
-where max(0, c - floor((size - 1) / 2)) <= i <= min(C - 1, c + ceil((size - 1) / 2) - 1).
-
-Y[n, c, d1, ..., dk] = X[n, c, d1, ..., dk] / (bias + alpha / size * square_sum[n, c, d1, ..., dk] ) ^ beta
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(LRN, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.alpha = self.attributes.get('alpha')
-        self.beta = self.attributes.get('beta')
-        self.bias = self.attributes.get('bias')
-        self.size = self.attributes.get('size')
-        # Input data tensor from the previous operator; dimensions for image case are (N x C x H x W), where N is the batch size, C is the number of channels, and H and W are the height and the width of the data. For non image case, the dimensions are in the form of (N x C x D1 x D2 ... Dn), where N is the batch size. Optionally, if dimension denotation is in effect, the operation expects the input data tensor to arrive with the dimension denotation of [DATA_BATCH, DATA_CHANNEL, DATA_FEATURE, DATA_FEATURE ...].
-        self.i_X = self.input[0]
-        # Output tensor, which has the shape and type as input tensor
-        self.o_Y = self.output[0]
-
-    def accept(self, visitor, network):
-        super(LRN, self).accept(visitor, network)
-        visitor.visit_lrn(self, network)
-
-    @classmethod
-    def create_op(cls, i_X: str, o_Y: str, alpha: OnnxAttribute, beta: OnnxAttribute, bias: OnnxAttribute, size: OnnxAttribute):
-        attributes = {
-            'alpha': alpha,
-            'beta': beta,
-            'bias': bias,
-            'size': size,
-        }
-        return cls([i_X], [o_Y], None, None, None, attributes, None)
-
-
-class Mean(Operation):
-    """
-Element-wise mean of each of the input tensors. All inputs and outputs must
-have the same shape and data type.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Mean, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # List of tensors for Mean.
-        # input is variadic [1,infty) just use self.input to access whole list
-        # Output tensor. Same dimension as inputs.
-        self.o_mean = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Mean, self).accept(visitor, network)
-        visitor.visit_mean(self, network)
-
-    @classmethod
-    def create_op(cls, i_data_0: str, o_mean: str):
-        attributes = {
-        }
-        return cls([i_data_0], [o_mean], None, None, None, attributes, None)
-
-
-class Mul(Operation):
-    """
-Performs element-wise binary multiplication (with Numpy-style broadcasting support).
-
-This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Mul, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # First operand.
-        self.i_A = self.input[0]
-        # Second operand.
-        self.i_B = self.input[1]
-        # Result, has same element type as two inputs
-        self.o_C = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Mul, self).accept(visitor, network)
-        visitor.visit_mul(self, network)
-
-    @classmethod
-    def create_op(cls, i_A: str, i_B: str, o_C: str):
-        attributes = {
-        }
-        return cls([i_A, i_B], [o_C], None, None, None, attributes, None)
-
-
-class GlobalMaxPool(Operation):
-    """
- GlobalMaxPool consumes an input tensor X and applies max pooling across the
- the values in the same channel. This is equivalent to MaxPool with kernel size
- equal to the spatial dimension of input tensor.    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(GlobalMaxPool, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # Input data tensor from the previous operator; dimensions for image case are (N x C x H x W), where N is the batch size, C is the number of channels, and H and W are the height and the width of the data. For non image case, the dimensions are in the form of (N x C x D1 x D2 ... Dn), where N is the batch size.
-        self.i_X = self.input[0]
-        # Output data tensor from pooling across the input tensor. Dimensions will be N x C x 1 x 1
-        self.o_Y = self.output[0]
-
-    def accept(self, visitor, network):
-        super(GlobalMaxPool, self).accept(visitor, network)
-        visitor.visit_globalmaxpool(self, network)
-
-    @classmethod
-    def create_op(cls, i_X: str, o_Y: str):
-        attributes = {
-        }
-        return cls([i_X], [o_Y], None, None, None, attributes, None)
-
-
-class Pad(Operation):
-    """
-Given `data` tensor, pads, mode, and value.
-Example:
-  Insert 0 pads to the beginning of the second dimension.
-  data = [
-      [1.0, 1.2],
-      [2.3, 3.4],
-      [4.5, 5.7],
-  ]
-  pads = [0, 2, 0, 0]
-  output = [
-      [
-          [0.0, 0.0, 1.0, 1.2],
-          [0.0, 0.0, 2.3, 3.4],
-          [0.0, 0.0, 4.5, 5.7],
-      ],
-  ]
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Pad, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.mode = self.attributes.get('mode')
-        self.pads = self.attributes.get('pads')
-        self.value = self.attributes.get('value')
-        # Input tensor.
-        self.i_data = self.input[0]
-        # Tensor after padding.
-        self.o_output = self.output[0]
-
-    def accept(self, visitor, network):
-        super(Pad, self).accept(visitor, network)
-        visitor.visit_pad(self, network)
-
-    @classmethod
-    def create_op(cls, i_data: str, o_output: str, mode: OnnxAttribute, pads: OnnxAttribute, value: OnnxAttribute):
-        attributes = {
-            'mode': mode,
-            'pads': pads,
-            'value': value,
-        }
-        return cls([i_data], [o_output], None, None, None, attributes, None)
-
-
 class Or(Operation):
     """
 Returns the tensor resulted from performing the `or` logical operation
@@ -3548,6 +2744,355 @@ This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; fo
         attributes = {
         }
         return cls([i_A, i_B], [o_C], None, None, None, attributes, None)
+
+
+class Pad(Operation):
+    """
+Given a tensor containing the data to be padded (`data`), a tensor containing the number of start and end pad values for axis (`pads`), (optionally) a `mode`, and (optionally) `constant_value`, 
+a padded tensor (`output`) is generated.
+
+The three supported `modes` are (similar to corresponding modes supported by `numpy.pad`):
+
+1) `constant`(default) - pads with a given constant value as specified by `constant_value` (which defaults to 0)
+
+2) `reflect` - pads with the reflection of the vector mirrored on the first and last values of the vector along each axis
+
+3) `edge` - pads with the edge values of array
+
+
+Example 1 (`constant` mode):
+  Insert 0 pads to the beginning of the second dimension.
+
+  data = 
+  [
+      [1.0, 1.2],
+      [2.3, 3.4],
+      [4.5, 5.7],
+  ] 
+
+  pads = [0, 2, 0, 0]
+
+  mode = 'constant'
+
+  constant_value = 0.0
+
+  output = 
+  [
+      [
+          [0.0, 0.0, 1.0, 1.2],
+          [0.0, 0.0, 2.3, 3.4],
+          [0.0, 0.0, 4.5, 5.7],
+      ],
+  ]
+
+
+Example 2 (`reflect` mode):
+  data = 
+  [
+      [1.0, 1.2],
+      [2.3, 3.4],
+      [4.5, 5.7],
+  ] 
+
+  pads = [0, 2, 0, 0]
+
+  mode = 'reflect'
+
+  output = 
+  [
+      [
+          [1.0, 1.2, 1.0, 1.2],
+          [2.3, 3.4, 2.3, 3.4],
+          [4.5, 5.7, 4.5, 5.7],
+      ],
+  ]
+
+
+Example 3 (`edge` mode):
+  data = 
+  [
+      [1.0, 1.2],
+      [2.3, 3.4],
+      [4.5, 5.7],
+  ] 
+
+  pads = [0, 2, 0, 0]
+
+  mode = 'edge'
+
+  output = 
+  [
+      [
+          [1.0, 1.0, 1.0, 1.2],
+          [2.3, 2.3, 2.3, 3.4],
+          [4.5, 4.5, 4.5, 5.7],
+      ],
+  ]
+
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Pad, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.mode = self.attributes.get('mode')
+        # Input tensor.
+        self.i_data = self.input[0]
+        # Tensor of integers indicating the number of padding elements to add or remove (if negative) at the beginning and end of each axis. For 2D input tensor, it is the number of pixels. `pads` should be a 1D tensor of shape [2 * input_rank]. `pads` format should be: [x1_begin, x2_begin,...,x1_end, x2_end,...], where xi_begin is the number of pad values added at the beginning of axis `i` and xi_end, the number of pad values added at the end of axis `i`.
+        self.i_pads = self.input[1]
+        # (Optional) A scalar value to be used if the mode chosen is `constant` (by default it is 0).
+        # OPTIONAL
+        self.i_constant_value = None if len(self.input) < 3 else self.input[2]
+        # Tensor after padding.
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Pad, self).accept(visitor, network)
+        visitor.visit_pad(self, network)
+
+    @classmethod
+    def create_op(cls, i_data: str, i_pads: str, i_constant_value: str, o_output: str, mode: OnnxAttribute):
+        attributes = {
+            'mode': mode,
+        }
+        return cls([i_data, i_pads, i_constant_value], [o_output], None, None, None, attributes, None)
+
+
+class RandomUniformLike(Operation):
+    """
+Generate a tensor with random values drawn from a uniform distribution.
+The shape of the output tensor is copied from the shape of the input tensor,
+and the parameters of the uniform distribution are specified by `low` and `high`.
+
+The data type is specified by the 'dtype' argument, or copied from the input tensor if not provided.
+The 'dtype' argument must be one of the data types specified in the 'DataType' enum field in the
+TensorProto message and be valid as an output type.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(RandomUniformLike, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.dtype = self.attributes.get('dtype')
+        self.high = self.attributes.get('high')
+        self.low = self.attributes.get('low')
+        self.seed = self.attributes.get('seed')
+        # Input tensor to copy shape and optionally type information from.
+        self.i_input = self.input[0]
+        # Output tensor of random values drawn from uniform distribution
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(RandomUniformLike, self).accept(visitor, network)
+        visitor.visit_randomuniformlike(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, o_output: str, dtype: OnnxAttribute, high: OnnxAttribute, low: OnnxAttribute, seed: OnnxAttribute):
+        attributes = {
+            'dtype': dtype,
+            'high': high,
+            'low': low,
+            'seed': seed,
+        }
+        return cls([i_input], [o_output], None, None, None, attributes, None)
+
+
+class Reciprocal(Operation):
+    """
+Reciprocal takes one input data (Tensor<T>) and produces one output data
+(Tensor<T>) where the reciprocal is, y = 1/x, is applied to
+the tensor elementwise.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Reciprocal, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_X = self.input[0]
+        # Output tensor
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Reciprocal, self).accept(visitor, network)
+        visitor.visit_reciprocal(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str):
+        attributes = {
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class Pow(Operation):
+    """
+Pow takes input data (Tensor<T>) and exponent Tensor, and
+produces one output data (Tensor<T>) where the function `f(x) = x^exponent`,
+is applied to the data tensor elementwise.
+This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Pow, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # First operand, base of the exponent.
+        self.i_X = self.input[0]
+        # Second operand, power of the exponent.
+        self.i_Y = self.input[1]
+        # Output tensor (same size as X)
+        self.o_Z = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Pow, self).accept(visitor, network)
+        visitor.visit_pow(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, i_Y: str, o_Z: str):
+        attributes = {
+        }
+        return cls([i_X, i_Y], [o_Z], None, None, None, attributes, None)
+
+
+class RandomNormalLike(Operation):
+    """
+Generate a tensor with random values drawn from a normal distribution.
+The shape of the output tensor is copied from the shape of the input tensor,
+and the parameters of the normal distribution are specified by `mean` and `scale`.
+
+The data type is specified by the 'dtype' argument, or copied from the input tensor if not provided.
+The 'dtype' argument must be one of the data types specified in the 'DataType' enum field in the
+TensorProto message, and be valid as an output type.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(RandomNormalLike, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.dtype = self.attributes.get('dtype')
+        self.mean = self.attributes.get('mean')
+        self.scale = self.attributes.get('scale')
+        self.seed = self.attributes.get('seed')
+        # Input tensor to copy shape and optionally type information from.
+        self.i_input = self.input[0]
+        # Output tensor of random values drawn from normal distribution
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(RandomNormalLike, self).accept(visitor, network)
+        visitor.visit_randomnormallike(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, o_output: str, dtype: OnnxAttribute, mean: OnnxAttribute, scale: OnnxAttribute, seed: OnnxAttribute):
+        attributes = {
+            'dtype': dtype,
+            'mean': mean,
+            'scale': scale,
+            'seed': seed,
+        }
+        return cls([i_input], [o_output], None, None, None, attributes, None)
+
+
+class OneHot(Operation):
+    """
+    Produces a one-hot tensor based on inputs.
+    The locations represented by the index values in the 'indices' input tensor will have 'on_value'
+    and the other locations will have 'off_value' in the output tensor, where 'on_value' and 'off_value'
+    are specified as part of required input argument 'values', which is a two-element tensor of format
+    [off_value, on_value]. The rank of the output tensor will be one greater than the rank of the
+    input tensor. The additional dimension is for one-hot representation. The additional dimension will
+    be inserted at the position specified by 'axis'. If 'axis' is not specified then then additional
+    dimension will be inserted as the innermost dimension, i.e. axis=-1. The size of the additional
+    dimension is specified by required scalar input 'depth'. The type of the output tensor is the same
+    as the type of the 'values' input. Any entries in the 'indices' input tensor with values outside
+    the range [-depth, depth-1] will result in one-hot representation with all 'off_value' values in the
+    output tensor.
+
+    when axis = 0:
+    output[input[i, j, k], i, j, k] = 1 for all i, j, k and 0 otherwise.
+
+    when axis = -1:
+    output[i, j, k, input[i, j, k]] = 1 for all i, j, k and 0 otherwise.
+
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(OneHot, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axis = self.attributes.get('axis')
+        # Input tensor containing indices. Any entries in the 'indices' input tensor with values outside the range [-depth, depth-1] will result in one-hot representation with all 'off_value' values in the output tensor.In case 'indices' is of non-integer type, the values will be casted to int64 before use.
+        self.i_indices = self.input[0]
+        # Scalar specifying the number of classes in one-hot tensor. This is also the size of the one-hot dimension (specified by 'axis' attribute) added on in the output tensor. The values in the 'indices' input tensor are expected to be in the range [-depth, depth-1]. In case 'depth' is of non-integer type, it will be casted to int64 before use.
+        self.i_depth = self.input[1]
+        # Rank 1 tensor containing exactly two elements, in the format [off_value, on_value], where 'on_value' is the value used for filling locations specified in 'indices' input tensor, and 'off_value' is the value used for filling locations other than those specified in 'indices' input tensor. 
+        self.i_values = self.input[2]
+        # Tensor of rank one greater than input tensor 'indices', i.e. rank(output) = rank(indices) + 1. The data type for the elements of the output tensor is the same as the type of input 'values' is used.
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(OneHot, self).accept(visitor, network)
+        visitor.visit_onehot(self, network)
+
+    @classmethod
+    def create_op(cls, i_indices: str, i_depth: str, i_values: str, o_output: str, axis: OnnxAttribute):
+        attributes = {
+            'axis': axis,
+        }
+        return cls([i_indices, i_depth, i_values], [o_output], None, None, None, attributes, None)
+
+
+class RandomUniform(Operation):
+    """
+Generate a tensor with random values drawn from a uniform distribution. The shape
+of the tensor is specified by the `shape` argument and the range by `low` and `high`.
+
+The data type is specified by the 'dtype' argument. The 'dtype' argument must
+be one of the data types specified in the 'DataType' enum field in the
+TensorProto message.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(RandomUniform, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.dtype = self.attributes.get('dtype')
+        self.high = self.attributes.get('high')
+        self.low = self.attributes.get('low')
+        self.seed = self.attributes.get('seed')
+        self.shape = self.attributes.get('shape')
+        # Output tensor of random values drawn from uniform distribution
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(RandomUniform, self).accept(visitor, network)
+        visitor.visit_randomuniform(self, network)
+
+    @classmethod
+    def create_op(cls, o_output: str, dtype: OnnxAttribute, high: OnnxAttribute, low: OnnxAttribute, seed: OnnxAttribute, shape: OnnxAttribute):
+        attributes = {
+            'dtype': dtype,
+            'high': high,
+            'low': low,
+            'seed': seed,
+            'shape': shape,
+        }
+        return cls([], [o_output], None, None, None, attributes, None)
+
+
+class ConcatFromSequence(Operation):
+    """
+Concatenate a sequence of tensors into a single tensor.
+All input tensors must have the same shape, except for the dimension size of the axis to concatenate on.
+By default 'new_axis' is 0, the behavior is similar to numpy.concatenate.
+When 'new_axis' is 1, the behavior is similar to numpy.stack.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(ConcatFromSequence, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axis = self.attributes.get('axis')
+        self.new_axis = self.attributes.get('new_axis')
+        # Sequence of tensors for concatenation
+        self.i_input_sequence = self.input[0]
+        # Concatenated tensor
+        self.o_concat_result = self.output[0]
+
+    def accept(self, visitor, network):
+        super(ConcatFromSequence, self).accept(visitor, network)
+        visitor.visit_concatfromsequence(self, network)
+
+    @classmethod
+    def create_op(cls, i_input_sequence: str, o_concat_result: str, axis: OnnxAttribute, new_axis: OnnxAttribute):
+        attributes = {
+            'axis': axis,
+            'new_axis': new_axis,
+        }
+        return cls([i_input_sequence], [o_concat_result], None, None, None, attributes, None)
 
 
 class ReduceL1(Operation):
@@ -3581,78 +3126,580 @@ False instead of True.    """
         return cls([i_data], [o_reduced], None, None, None, attributes, None)
 
 
-class ParametricSoftplus(Operation):
+class ReduceLogSum(Operation):
     """
-ParametricSoftplus takes one input data (Tensor<T>) and produces one output data
-(Tensor<T>) where the softplus function, y = alpha * ln(exp(beta * x) + 1), is applied to
+Computes the log sum of the input tensor's element along the provided axes. The resulted
+tensor has the same rank as the input if keepdims equal 1. If keepdims equal 0, then
+the resulted tensor have the reduced dimension pruned.
+
+The above behavior is similar to numpy, with the exception that numpy default keepdims to
+False instead of True.    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(ReduceLogSum, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axes = self.attributes.get('axes')
+        self.keepdims = self.attributes.get('keepdims')
+        # An input tensor.
+        self.i_data = self.input[0]
+        # Reduced output tensor.
+        self.o_reduced = self.output[0]
+
+    def accept(self, visitor, network):
+        super(ReduceLogSum, self).accept(visitor, network)
+        visitor.visit_reducelogsum(self, network)
+
+    @classmethod
+    def create_op(cls, i_data: str, o_reduced: str, axes: OnnxAttribute, keepdims: OnnxAttribute):
+        attributes = {
+            'axes': axes,
+            'keepdims': keepdims,
+        }
+        return cls([i_data], [o_reduced], None, None, None, attributes, None)
+
+
+class ReduceLogSumExp(Operation):
+    """
+Computes the log sum exponent of the input tensor's element along the provided axes. The resulted
+tensor has the same rank as the input if keepdims equal 1. If keepdims equal 0, then
+the resulted tensor have the reduced dimension pruned.
+
+The above behavior is similar to numpy, with the exception that numpy default keepdims to
+False instead of True.    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(ReduceLogSumExp, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axes = self.attributes.get('axes')
+        self.keepdims = self.attributes.get('keepdims')
+        # An input tensor.
+        self.i_data = self.input[0]
+        # Reduced output tensor.
+        self.o_reduced = self.output[0]
+
+    def accept(self, visitor, network):
+        super(ReduceLogSumExp, self).accept(visitor, network)
+        visitor.visit_reducelogsumexp(self, network)
+
+    @classmethod
+    def create_op(cls, i_data: str, o_reduced: str, axes: OnnxAttribute, keepdims: OnnxAttribute):
+        attributes = {
+            'axes': axes,
+            'keepdims': keepdims,
+        }
+        return cls([i_data], [o_reduced], None, None, None, attributes, None)
+
+
+class ReduceMax(Operation):
+    """
+Computes the max of the input tensor's element along the provided axes. The resulted
+tensor has the same rank as the input if keepdims equal 1. If keepdims equal 0, then
+the resulted tensor have the reduced dimension pruned.
+
+The above behavior is similar to numpy, with the exception that numpy default keepdims to
+False instead of True.    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(ReduceMax, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axes = self.attributes.get('axes')
+        self.keepdims = self.attributes.get('keepdims')
+        # An input tensor.
+        self.i_data = self.input[0]
+        # Reduced output tensor.
+        self.o_reduced = self.output[0]
+
+    def accept(self, visitor, network):
+        super(ReduceMax, self).accept(visitor, network)
+        visitor.visit_reducemax(self, network)
+
+    @classmethod
+    def create_op(cls, i_data: str, o_reduced: str, axes: OnnxAttribute, keepdims: OnnxAttribute):
+        attributes = {
+            'axes': axes,
+            'keepdims': keepdims,
+        }
+        return cls([i_data], [o_reduced], None, None, None, attributes, None)
+
+
+class OneHotEncoder(Operation):
+    """
+    Replace each input element with an array of ones and zeros, where a single
+    one is placed at the index of the category that was passed in. The total category count 
+    will determine the size of the extra dimension of the output array Y.<br>
+    For example, if we pass a tensor with a single value of 4, and a category count of 8, 
+    the output will be a tensor with ``[0,0,0,0,1,0,0,0]``.<br>
+    This operator assumes every input feature is from the same set of categories.<br>
+    If the input is a tensor of float, int32, or double, the data will be cast
+    to integers and the cats_int64s category list will be used for the lookups.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(OneHotEncoder, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.cats_int64s = self.attributes.get('cats_int64s')
+        self.cats_strings = self.attributes.get('cats_strings')
+        self.zeros = self.attributes.get('zeros')
+        # Data to be encoded.
+        self.i_X = self.input[0]
+        # Encoded output data, having one more dimension than X.
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(OneHotEncoder, self).accept(visitor, network)
+        visitor.visit_onehotencoder(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, cats_int64s: OnnxAttribute, cats_strings: OnnxAttribute, zeros: OnnxAttribute):
+        attributes = {
+            'cats_int64s': cats_int64s,
+            'cats_strings': cats_strings,
+            'zeros': zeros,
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class IsNaN(Operation):
+    """Returns which elements of the input are NaN.    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(IsNaN, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # input
+        self.i_X = self.input[0]
+        # output
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(IsNaN, self).accept(visitor, network)
+        visitor.visit_isnan(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str):
+        attributes = {
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class ReduceMean(Operation):
+    """
+Computes the mean of the input tensor's element along the provided axes. The resulted
+tensor has the same rank as the input if keepdims equal 1. If keepdims equal 0, then
+the resulted tensor have the reduced dimension pruned.
+
+The above behavior is similar to numpy, with the exception that numpy default keepdims to
+False instead of True.    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(ReduceMean, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axes = self.attributes.get('axes')
+        self.keepdims = self.attributes.get('keepdims')
+        # An input tensor.
+        self.i_data = self.input[0]
+        # Reduced output tensor.
+        self.o_reduced = self.output[0]
+
+    def accept(self, visitor, network):
+        super(ReduceMean, self).accept(visitor, network)
+        visitor.visit_reducemean(self, network)
+
+    @classmethod
+    def create_op(cls, i_data: str, o_reduced: str, axes: OnnxAttribute, keepdims: OnnxAttribute):
+        attributes = {
+            'axes': axes,
+            'keepdims': keepdims,
+        }
+        return cls([i_data], [o_reduced], None, None, None, attributes, None)
+
+
+class ReduceMin(Operation):
+    """
+Computes the min of the input tensor's element along the provided axes. The resulted
+tensor has the same rank as the input if keepdims equal 1. If keepdims equal 0, then
+the resulted tensor have the reduced dimension pruned.
+
+The above behavior is similar to numpy, with the exception that numpy default keepdims to
+False instead of True.    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(ReduceMin, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axes = self.attributes.get('axes')
+        self.keepdims = self.attributes.get('keepdims')
+        # An input tensor.
+        self.i_data = self.input[0]
+        # Reduced output tensor.
+        self.o_reduced = self.output[0]
+
+    def accept(self, visitor, network):
+        super(ReduceMin, self).accept(visitor, network)
+        visitor.visit_reducemin(self, network)
+
+    @classmethod
+    def create_op(cls, i_data: str, o_reduced: str, axes: OnnxAttribute, keepdims: OnnxAttribute):
+        attributes = {
+            'axes': axes,
+            'keepdims': keepdims,
+        }
+        return cls([i_data], [o_reduced], None, None, None, attributes, None)
+
+
+class TreeEnsembleRegressor(Operation):
+    """
+    Tree Ensemble regressor.  Returns the regressed values for each input in N.<br>
+    All args with nodes_ are fields of a tuple of tree nodes, and
+    it is assumed they are the same length, and an index i will decode the
+    tuple across these inputs.  Each node id can appear only once
+    for each tree id.<br>
+    All fields prefixed with target_ are tuples of votes at the leaves.<br>
+    A leaf may have multiple votes, where each vote is weighted by
+    the associated target_weights index.<br>
+    All trees must have their node ids start at 0 and increment by 1.<br>
+    Mode enum is BRANCH_LEQ, BRANCH_LT, BRANCH_GTE, BRANCH_GT, BRANCH_EQ, BRANCH_NEQ, LEAF
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(TreeEnsembleRegressor, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.aggregate_function = self.attributes.get('aggregate_function')
+        self.base_values = self.attributes.get('base_values')
+        self.n_targets = self.attributes.get('n_targets')
+        self.nodes_falsenodeids = self.attributes.get('nodes_falsenodeids')
+        self.nodes_featureids = self.attributes.get('nodes_featureids')
+        self.nodes_hitrates = self.attributes.get('nodes_hitrates')
+        self.nodes_missing_value_tracks_true = self.attributes.get('nodes_missing_value_tracks_true')
+        self.nodes_modes = self.attributes.get('nodes_modes')
+        self.nodes_nodeids = self.attributes.get('nodes_nodeids')
+        self.nodes_treeids = self.attributes.get('nodes_treeids')
+        self.nodes_truenodeids = self.attributes.get('nodes_truenodeids')
+        self.nodes_values = self.attributes.get('nodes_values')
+        self.post_transform = self.attributes.get('post_transform')
+        self.target_ids = self.attributes.get('target_ids')
+        self.target_nodeids = self.attributes.get('target_nodeids')
+        self.target_treeids = self.attributes.get('target_treeids')
+        self.target_weights = self.attributes.get('target_weights')
+        # Input of shape [N,F]
+        self.i_X = self.input[0]
+        # N classes
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(TreeEnsembleRegressor, self).accept(visitor, network)
+        visitor.visit_treeensembleregressor(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, aggregate_function: OnnxAttribute, base_values: OnnxAttribute, n_targets: OnnxAttribute, nodes_falsenodeids: OnnxAttribute, nodes_featureids: OnnxAttribute, nodes_hitrates: OnnxAttribute, nodes_missing_value_tracks_true: OnnxAttribute, nodes_modes: OnnxAttribute, nodes_nodeids: OnnxAttribute, nodes_treeids: OnnxAttribute, nodes_truenodeids: OnnxAttribute, nodes_values: OnnxAttribute, post_transform: OnnxAttribute, target_ids: OnnxAttribute, target_nodeids: OnnxAttribute, target_treeids: OnnxAttribute, target_weights: OnnxAttribute):
+        attributes = {
+            'aggregate_function': aggregate_function,
+            'base_values': base_values,
+            'n_targets': n_targets,
+            'nodes_falsenodeids': nodes_falsenodeids,
+            'nodes_featureids': nodes_featureids,
+            'nodes_hitrates': nodes_hitrates,
+            'nodes_missing_value_tracks_true': nodes_missing_value_tracks_true,
+            'nodes_modes': nodes_modes,
+            'nodes_nodeids': nodes_nodeids,
+            'nodes_treeids': nodes_treeids,
+            'nodes_truenodeids': nodes_truenodeids,
+            'nodes_values': nodes_values,
+            'post_transform': post_transform,
+            'target_ids': target_ids,
+            'target_nodeids': target_nodeids,
+            'target_treeids': target_treeids,
+            'target_weights': target_weights,
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class ReduceProd(Operation):
+    """
+Computes the product of the input tensor's element along the provided axes. The resulted
+tensor has the same rank as the input if keepdims equal 1. If keepdims equal 0, then
+the resulted tensor have the reduced dimension pruned.
+
+The above behavior is similar to numpy, with the exception that numpy default keepdims to
+False instead of True.    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(ReduceProd, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axes = self.attributes.get('axes')
+        self.keepdims = self.attributes.get('keepdims')
+        # An input tensor.
+        self.i_data = self.input[0]
+        # Reduced output tensor.
+        self.o_reduced = self.output[0]
+
+    def accept(self, visitor, network):
+        super(ReduceProd, self).accept(visitor, network)
+        visitor.visit_reduceprod(self, network)
+
+    @classmethod
+    def create_op(cls, i_data: str, o_reduced: str, axes: OnnxAttribute, keepdims: OnnxAttribute):
+        attributes = {
+            'axes': axes,
+            'keepdims': keepdims,
+        }
+        return cls([i_data], [o_reduced], None, None, None, attributes, None)
+
+
+class ReduceSum(Operation):
+    """
+Computes the sum of the input tensor's element along the provided axes. The resulted
+tensor has the same rank as the input if keepdims equal 1. If keepdims equal 0, then
+the resulted tensor have the reduced dimension pruned.
+
+The above behavior is similar to numpy, with the exception that numpy default keepdims to
+False instead of True.    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(ReduceSum, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axes = self.attributes.get('axes')
+        self.keepdims = self.attributes.get('keepdims')
+        # An input tensor.
+        self.i_data = self.input[0]
+        # Reduced output tensor.
+        self.o_reduced = self.output[0]
+
+    def accept(self, visitor, network):
+        super(ReduceSum, self).accept(visitor, network)
+        visitor.visit_reducesum(self, network)
+
+    @classmethod
+    def create_op(cls, i_data: str, o_reduced: str, axes: OnnxAttribute, keepdims: OnnxAttribute):
+        attributes = {
+            'axes': axes,
+            'keepdims': keepdims,
+        }
+        return cls([i_data], [o_reduced], None, None, None, attributes, None)
+
+
+class ReduceSumSquare(Operation):
+    """
+Computes the sum square of the input tensor's element along the provided axes. The resulted
+tensor has the same rank as the input if keepdims equal 1. If keepdims equal 0, then
+the resulted tensor have the reduced dimension pruned.
+
+The above behavior is similar to numpy, with the exception that numpy default keepdims to
+False instead of True.    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(ReduceSumSquare, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axes = self.attributes.get('axes')
+        self.keepdims = self.attributes.get('keepdims')
+        # An input tensor.
+        self.i_data = self.input[0]
+        # Reduced output tensor.
+        self.o_reduced = self.output[0]
+
+    def accept(self, visitor, network):
+        super(ReduceSumSquare, self).accept(visitor, network)
+        visitor.visit_reducesumsquare(self, network)
+
+    @classmethod
+    def create_op(cls, i_data: str, o_reduced: str, axes: OnnxAttribute, keepdims: OnnxAttribute):
+        attributes = {
+            'axes': axes,
+            'keepdims': keepdims,
+        }
+        return cls([i_data], [o_reduced], None, None, None, attributes, None)
+
+
+class Relu(Operation):
+    """
+Relu takes one input data (Tensor<T>) and produces one output data
+(Tensor<T>) where the rectified linear function, y = max(0, x), is applied to
 the tensor elementwise.
     """
 
     def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(ParametricSoftplus, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.alpha = self.attributes.get('alpha')
-        self.beta = self.attributes.get('beta')
+        super(Relu, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_X = self.input[0]
+        # Output tensor
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Relu, self).accept(visitor, network)
+        visitor.visit_relu(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str):
+        attributes = {
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class Reshape(Operation):
+    """
+Reshape the input tensor similar to numpy.reshape.
+First input is the data tensor, second input is a shape tensor which specifies the output shape. It outputs the reshaped tensor.
+At most one dimension of the new shape can be -1. In this case, the value is
+inferred from the size of the tensor and the remaining dimensions. A dimension
+could also be 0, in which case the actual dimension value is unchanged (i.e. taken
+from the input tensor).    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Reshape, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # An input tensor.
+        self.i_data = self.input[0]
+        # Specified shape for output.
+        self.i_shape = self.input[1]
+        # Reshaped data.
+        self.o_reshaped = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Reshape, self).accept(visitor, network)
+        visitor.visit_reshape(self, network)
+
+    @classmethod
+    def create_op(cls, i_data: str, i_shape: str, o_reshaped: str):
+        attributes = {
+        }
+        return cls([i_data, i_shape], [o_reshaped], None, None, None, attributes, None)
+
+
+class Shape(Operation):
+    """
+Takes a tensor as input and outputs an 1D int64 tensor containing the shape of the input tensor.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Shape, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # An input tensor.
+        self.i_data = self.input[0]
+        # Shape of the input tensor
+        self.o_shape = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Shape, self).accept(visitor, network)
+        visitor.visit_shape(self, network)
+
+    @classmethod
+    def create_op(cls, i_data: str, o_shape: str):
+        attributes = {
+        }
+        return cls([i_data], [o_shape], None, None, None, attributes, None)
+
+
+class Sigmoid(Operation):
+    """
+Sigmoid takes one input data (Tensor<T>) and produces one output data
+(Tensor<T>) where the sigmoid function, y = 1 / (1 + exp(-x)), is applied to the
+tensor elementwise.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Sigmoid, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_X = self.input[0]
+        # Output tensor
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Sigmoid, self).accept(visitor, network)
+        visitor.visit_sigmoid(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str):
+        attributes = {
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class Size(Operation):
+    """
+Takes a tensor as input and outputs a int64 scalar that equals to the total number of elements of the input tensor.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Size, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # An input tensor.
+        self.i_data = self.input[0]
+        # Total number of elements of the input tensor
+        self.o_size = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Size, self).accept(visitor, network)
+        visitor.visit_size(self, network)
+
+    @classmethod
+    def create_op(cls, i_data: str, o_size: str):
+        attributes = {
+        }
+        return cls([i_data], [o_size], None, None, None, attributes, None)
+
+
+class Softmax(Operation):
+    """
+The operator computes the softmax (normalized exponential) values for each layer in the batch
+ of the given input.
+
+The input does not need to explicitly be a 2D vector; rather, it will be
+coerced into one. For an arbitrary n-dimensional tensor
+input \in [a_0, a_1, ..., a_{k-1}, a_k, ..., a_{n-1}] and k is
+the axis provided, then input will be coerced into a 2-dimensional tensor with
+dimensions [a_0 * ... * a_{k-1}, a_k * ... * a_{n-1}]. For the default
+case where axis=1, this means the input tensor will be coerced into a 2D tensor
+of dimensions [a_0, a_1 * ... * a_{n-1}], where a_0 is often the batch size.
+In this situation, we must have a_0 = N and a_1 * ... * a_{n-1} = D.
+Each of these dimensions must be matched correctly, or else the operator
+will throw errors. The output tensor has the same shape
+and contains the softmax values of the corresponding input.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Softmax, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axis = self.attributes.get('axis')
+        # The input tensor that's coerced into a 2D matrix of size (NxD) as described above.
+        self.i_input = self.input[0]
+        # The output values with the same shape as input tensor (the original size without coercion).
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Softmax, self).accept(visitor, network)
+        visitor.visit_softmax(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, o_output: str, axis: OnnxAttribute):
+        attributes = {
+            'axis': axis,
+        }
+        return cls([i_input], [o_output], None, None, None, attributes, None)
+
+
+class Softplus(Operation):
+    """
+Softplus takes one input data (Tensor<T>) and produces one output data
+(Tensor<T>) where the softplus function, y = ln(exp(x) + 1), is applied to
+the tensor elementwise.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Softplus, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
         # 1D input tensor
         self.i_X = self.input[0]
         # 1D input tensor
         self.o_Y = self.output[0]
 
     def accept(self, visitor, network):
-        super(ParametricSoftplus, self).accept(visitor, network)
-        visitor.visit_parametricsoftplus(self, network)
+        super(Softplus, self).accept(visitor, network)
+        visitor.visit_softplus(self, network)
 
     @classmethod
-    def create_op(cls, i_X: str, o_Y: str, alpha: OnnxAttribute, beta: OnnxAttribute):
+    def create_op(cls, i_X: str, o_Y: str):
         attributes = {
-            'alpha': alpha,
-            'beta': beta,
         }
         return cls([i_X], [o_Y], None, None, None, attributes, None)
 
 
-class Pow(Operation):
+class Softsign(Operation):
     """
-Pow takes input data (Tensor<T>) and exponent Tensor, and
-produces one output data (Tensor<T>) where the function `f(x) = x^exponent`,
-is applied to the data tensor elementwise.
-This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).    """
+Calculates the softsign (x/(1+|x|)) of the given input tensor element-wise.
+    """
 
     def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Pow, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # First operand, base of the exponent.
-        self.i_X = self.input[0]
-        # Second operand, power of the exponent.
-        self.i_Y = self.input[1]
-        # Output tensor (same size as X)
-        self.o_Z = self.output[0]
+        super(Softsign, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_input = self.input[0]
+        # The softsign (x/(1+|x|)) values of the input tensor computed element-wise
+        self.o_output = self.output[0]
 
     def accept(self, visitor, network):
-        super(Pow, self).accept(visitor, network)
-        visitor.visit_pow(self, network)
-
-    @classmethod
-    def create_op(cls, i_X: str, i_Y: str, o_Z: str):
-        attributes = {
-        }
-        return cls([i_X, i_Y], [o_Z], None, None, None, attributes, None)
-
-
-class ATen(Operation):
-    """
-Experimental allowing ATen operations to be accessed directly from Caffe2
-to allow for quick prototyping when ONNX is missing standard versions of
-and op    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(ATen, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        # Arbitrary input
-        # input is variadic [1,infty) just use self.input to access whole list
-        # Arbitrary output
-        # output is variadic [1,infty) just use self.output to access whole list
-
-    def accept(self, visitor, network):
-        super(ATen, self).accept(visitor, network)
-        visitor.visit_aten(self, network)
+        super(Softsign, self).accept(visitor, network)
+        visitor.visit_softsign(self, network)
 
     @classmethod
     def create_op(cls, i_input: str, o_output: str):
@@ -3661,168 +3708,1418 @@ and op    """
         return cls([i_input], [o_output], None, None, None, attributes, None)
 
 
-class Constant(Operation):
-    """A constant tensor.    """
+class SpaceToDepth(Operation):
+    """SpaceToDepth rearranges blocks of spatial data into depth. More specifically,
+this op outputs a copy of the input tensor where values from the height and width dimensions
+are moved to the depth dimension.
+    """
 
     def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Constant, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.value = self.attributes.get('value')
-        # Output tensor containing the same value of the provided tensor.
+        super(SpaceToDepth, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.blocksize = self.attributes.get('blocksize')
+        # Input tensor of [N,C,H,W], where N is the batch axis, C is the channel or depth, H is the height and W is the width.
+        self.i_input = self.input[0]
+        # Output tensor of [N, C * blocksize * blocksize, H/blocksize, W/blocksize].
         self.o_output = self.output[0]
 
     def accept(self, visitor, network):
-        super(Constant, self).accept(visitor, network)
-        visitor.visit_constant(self, network)
+        super(SpaceToDepth, self).accept(visitor, network)
+        visitor.visit_spacetodepth(self, network)
 
     @classmethod
-    def create_op(cls, o_output: str, value: OnnxAttribute):
+    def create_op(cls, i_input: str, o_output: str, blocksize: OnnxAttribute):
         attributes = {
-            'value': value,
+            'blocksize': blocksize,
         }
-        return cls([], [o_output], None, None, None, attributes, None)
+        return cls([i_input], [o_output], None, None, None, attributes, None)
 
 
-class RandomNormal(Operation):
+class TfIdfVectorizer(Operation):
     """
-Generate a tensor with random values drawn from a normal distribution. The shape
-of the tensor is specified by the `shape` argument and the parameter of the normal distribution
-specified by `mean` and `scale`.
+This transform extracts n-grams from the input sequence and save them as a vector. Input can
+be either a 1-D or 2-D tensor. For 1-D input, output is the n-gram representation of that input.
+For 2-D input, the output is also a  2-D tensor whose i-th row is the n-gram representation of the i-th input row.
+More specifically, if input shape is [C], the corresponding output shape would be [max(ngram_indexes) + 1].
+If input shape is [N, C], this operator produces a [N, max(ngram_indexes) + 1]-tensor.
 
-The data type is specified by the 'dtype' argument. The 'dtype' argument must
-be one of the data types specified in the 'DataType' enum field in the
-TensorProto message.
+In contrast to standard n-gram extraction, here, the indexes of extracting an n-gram from the original
+sequence are not necessarily consecutive numbers. The discontinuity between indexes are controlled by the number of skips.
+If the number of skips is 2, we should skip two tokens when scanning through the original sequence.
+Let's consider an example. Assume that input sequence is [94, 17, 36, 12, 28] and the number of skips is 2.
+The associated 2-grams are [94, 12] and [17, 28] respectively indexed by [0, 3] and [1, 4].
+If the number of skips becomes 0, the 2-grams generated are [94, 17], [17, 36], [36, 12], [12, 28]
+indexed by [0, 1], [1, 2], [2, 3], [3, 4], respectively.
+
+The output vector (denoted by Y) stores the count of each n-gram;
+Y[ngram_indexes[i]] indicates the times that the i-th n-gram is found. The attribute ngram_indexes is used to determine the mapping
+between index i and the corresponding n-gram's output coordinate. If pool_int64s is [94, 17, 17, 36], ngram_indexes is [1, 0],
+ngram_counts=[0, 0], then the Y[0] (first element in Y) and Y[1] (second element in Y) are the counts of [17, 36] and [94, 17],
+respectively. An n-gram which cannot be found in pool_strings/pool_int64s should be ignored and has no effect on the output.
+Note that we may consider all skips up to S when generating the n-grams.
+
+The examples used above are true if mode is "TF". If mode is "IDF", all the counts larger than 1 would be truncated to 1 and
+the i-th element in weights would be used to scale (by multiplication) the count of the i-th n-gram in pool. If mode is "TFIDF",
+this operator first computes the counts of all n-grams and then scale them by the associated values in the weights attribute.
+
+Only one of pool_strings and pool_int64s can be set. If pool_int64s is set, the input should be an integer tensor.
+If pool_strings is set, the input must be a string tensor.
     """
 
     def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(RandomNormal, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.dtype = self.attributes.get('dtype')
-        self.mean = self.attributes.get('mean')
-        self.scale = self.attributes.get('scale')
-        self.seed = self.attributes.get('seed')
-        self.shape = self.attributes.get('shape')
-        # Output tensor of random values drawn from normal distribution
-        self.o_output = self.output[0]
-
-    def accept(self, visitor, network):
-        super(RandomNormal, self).accept(visitor, network)
-        visitor.visit_randomnormal(self, network)
-
-    @classmethod
-    def create_op(cls, o_output: str, dtype: OnnxAttribute, mean: OnnxAttribute, scale: OnnxAttribute, seed: OnnxAttribute, shape: OnnxAttribute):
-        attributes = {
-            'dtype': dtype,
-            'mean': mean,
-            'scale': scale,
-            'seed': seed,
-            'shape': shape,
-        }
-        return cls([], [o_output], None, None, None, attributes, None)
-
-
-class HardSigmoid(Operation):
-    """
-HardSigmoid takes one input data (Tensor<T>) and produces one output data
-(Tensor<T>) where the HardSigmoid function, y = max(0, min(1, alpha * x + beta)),
-is applied to the tensor elementwise.
-    """
-
-    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(HardSigmoid, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.alpha = self.attributes.get('alpha')
-        self.beta = self.attributes.get('beta')
-        # Input tensor
+        super(TfIdfVectorizer, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.max_gram_length = self.attributes.get('max_gram_length')
+        self.max_skip_count = self.attributes.get('max_skip_count')
+        self.min_gram_length = self.attributes.get('min_gram_length')
+        self.mode = self.attributes.get('mode')
+        self.ngram_counts = self.attributes.get('ngram_counts')
+        self.ngram_indexes = self.attributes.get('ngram_indexes')
+        self.pool_int64s = self.attributes.get('pool_int64s')
+        self.pool_strings = self.attributes.get('pool_strings')
+        self.weights = self.attributes.get('weights')
+        # Input for n-gram extraction
         self.i_X = self.input[0]
-        # Output tensor
+        # Ngram results
         self.o_Y = self.output[0]
 
     def accept(self, visitor, network):
-        super(HardSigmoid, self).accept(visitor, network)
-        visitor.visit_hardsigmoid(self, network)
+        super(TfIdfVectorizer, self).accept(visitor, network)
+        visitor.visit_tfidfvectorizer(self, network)
 
     @classmethod
-    def create_op(cls, i_X: str, o_Y: str, alpha: OnnxAttribute, beta: OnnxAttribute):
+    def create_op(cls, i_X: str, o_Y: str, max_gram_length: OnnxAttribute, max_skip_count: OnnxAttribute, min_gram_length: OnnxAttribute, mode: OnnxAttribute, ngram_counts: OnnxAttribute, ngram_indexes: OnnxAttribute, pool_int64s: OnnxAttribute, pool_strings: OnnxAttribute, weights: OnnxAttribute):
         attributes = {
-            'alpha': alpha,
-            'beta': beta,
+            'max_gram_length': max_gram_length,
+            'max_skip_count': max_skip_count,
+            'min_gram_length': min_gram_length,
+            'mode': mode,
+            'ngram_counts': ngram_counts,
+            'ngram_indexes': ngram_indexes,
+            'pool_int64s': pool_int64s,
+            'pool_strings': pool_strings,
+            'weights': weights,
         }
         return cls([i_X], [o_Y], None, None, None, attributes, None)
 
 
-class Clip(Operation):
-    """
-Clip operator limits the given input within an interval. The interval is
-specified with arguments 'min' and 'max'. They default to
-numeric_limits::lowest() and numeric_limits::max() respectively.
+class Split(Operation):
+    """Split a tensor into a list of tensors, along the specified
+'axis'. Lengths of the parts can be specified using argument 'split'.
+Otherwise, the tensor is split to equal sized parts.
     """
 
     def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Clip, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.max = self.attributes.get('max')
-        self.min = self.attributes.get('min')
-        # Input tensor whose elements to be clipped
+        super(Split, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axis = self.attributes.get('axis')
+        self.split = self.attributes.get('split')
+        # The tensor to split
         self.i_input = self.input[0]
-        # Output tensor with clipped input elements
+        # One or more outputs forming list of tensors after splitting
+        # output is variadic [1,infty) just use self.output to access whole list
+
+    def accept(self, visitor, network):
+        super(Split, self).accept(visitor, network)
+        visitor.visit_split(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, o_outputs: str, axis: OnnxAttribute, split: OnnxAttribute):
+        attributes = {
+            'axis': axis,
+            'split': split,
+        }
+        return cls([i_input], [o_outputs], None, None, None, attributes, None)
+
+
+class Imputer(Operation):
+    """
+    Replaces inputs that equal one value with another, leaving all other elements alone.<br>
+    This operator is typically used to replace missing values in situations where they have a canonical
+    representation, such as -1, 0, NaN, or some extreme value.<br>
+    One and only one of imputed_value_floats or imputed_value_int64s should be defined -- floats if the input tensor
+    holds floats, integers if the input tensor holds integers. The imputed values must all fit within the
+    width of the tensor element type. One and only one of the replaced_value_float or replaced_value_int64 should be defined,
+    which one depends on whether floats or integers are being processed.<br>
+    The imputed_value attribute length can be 1 element, or it can have one element per input feature.<br>In other words, if the input tensor has the shape [*,F], then the length of the attribute array may be 1 or F. If it is 1, then it is broadcast along the last dimension and applied to each feature.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Imputer, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.imputed_value_floats = self.attributes.get('imputed_value_floats')
+        self.imputed_value_int64s = self.attributes.get('imputed_value_int64s')
+        self.replaced_value_float = self.attributes.get('replaced_value_float')
+        self.replaced_value_int64 = self.attributes.get('replaced_value_int64')
+        # Data to be processed.
+        self.i_X = self.input[0]
+        # Imputed output data
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Imputer, self).accept(visitor, network)
+        visitor.visit_imputer(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, imputed_value_floats: OnnxAttribute, imputed_value_int64s: OnnxAttribute, replaced_value_float: OnnxAttribute, replaced_value_int64: OnnxAttribute):
+        attributes = {
+            'imputed_value_floats': imputed_value_floats,
+            'imputed_value_int64s': imputed_value_int64s,
+            'replaced_value_float': replaced_value_float,
+            'replaced_value_int64': replaced_value_int64,
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class Sqrt(Operation):
+    """
+Square root takes one input data (Tensor<T>) and produces one output data
+(Tensor<T>) where the square root is, y = x^0.5, is applied to
+the tensor elementwise. If x is negative, then it will return NaN.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Sqrt, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_X = self.input[0]
+        # Output tensor
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Sqrt, self).accept(visitor, network)
+        visitor.visit_sqrt(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str):
+        attributes = {
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class Squeeze(Operation):
+    """
+Remove single-dimensional entries from the shape of a tensor.
+Takes a  parameter `axes` with a list of axes to squeeze.
+If `axes` is not provided, all the single dimensions will be removed from
+the shape. If an axis is selected with shape entry not equal to one, an error is raised.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Squeeze, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axes = self.attributes.get('axes')
+        # Tensors with at least max(dims) dimensions.
+        self.i_data = self.input[0]
+        # Reshaped tensor with same data as input.
+        self.o_squeezed = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Squeeze, self).accept(visitor, network)
+        visitor.visit_squeeze(self, network)
+
+    @classmethod
+    def create_op(cls, i_data: str, o_squeezed: str, axes: OnnxAttribute):
+        attributes = {
+            'axes': axes,
+        }
+        return cls([i_data], [o_squeezed], None, None, None, attributes, None)
+
+
+class TopK(Operation):
+    """
+Retrieve the top-K largest or smallest elements along a specified axis. Given an input tensor of
+shape [a_1, a_2, ..., a_n, r] and integer argument k, return two outputs:
+  -Value tensor of shape [a_1, a_2, ..., a_{axis-1}, k, a_{axis+1}, ... a_n]
+    which contains the values of the top k elements along the specified axis
+  -Index tensor of shape [a_1, a_2, ..., a_{axis-1}, k, a_{axis+1}, ... a_n] which
+   contains the indices of the top k elements (original indices from the input
+   tensor).
+
+If "largest" is 1 (the default value) then the k largest elements are returned.
+If "sorted" is 1 (the default value) then the resulting k elements will be sorted.
+If "sorted" is 0, order of returned 'Values' and 'Indices' are undefined.
+
+Given two equivalent values, this operator uses the indices along the axis as
+ a tiebreaker. That is, the element with the lower index will appear first.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(TopK, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axis = self.attributes.get('axis')
+        self.largest = self.attributes.get('largest')
+        self.sorted = self.attributes.get('sorted')
+        # Tensor of shape [a_1, a_2, ..., a_n, r]
+        self.i_X = self.input[0]
+        # A 1-D tensor containing a single positive value corresponding to the number of top elements to retrieve
+        self.i_K = self.input[1]
+        # Tensor of shape [a_1, a_2, ..., a_{axis-1}, k, a_{axis+1}, ... a_n] containing top K values from the input tensor
+        self.o_Values = self.output[0]
+        # Tensor of shape [a_1, a_2, ..., a_{axis-1}, k, a_{axis+1}, ... a_n] containing the corresponding input tensor indices for the top K values.
+        self.o_Indices = self.output[1]
+
+    def accept(self, visitor, network):
+        super(TopK, self).accept(visitor, network)
+        visitor.visit_topk(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, i_K: str, o_Values: str, o_Indices: str, axis: OnnxAttribute, largest: OnnxAttribute, sorted: OnnxAttribute):
+        attributes = {
+            'axis': axis,
+            'largest': largest,
+            'sorted': sorted,
+        }
+        return cls([i_X, i_K], [o_Values, o_Indices], None, None, None, attributes, None)
+
+
+class Sub(Operation):
+    """
+Performs element-wise binary subtraction (with Numpy-style broadcasting support).
+
+This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Sub, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # First operand.
+        self.i_A = self.input[0]
+        # Second operand.
+        self.i_B = self.input[1]
+        # Result, has same element type as two inputs
+        self.o_C = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Sub, self).accept(visitor, network)
+        visitor.visit_sub(self, network)
+
+    @classmethod
+    def create_op(cls, i_A: str, i_B: str, o_C: str):
+        attributes = {
+        }
+        return cls([i_A, i_B], [o_C], None, None, None, attributes, None)
+
+
+class Sum(Operation):
+    """
+Element-wise sum of each of the input tensors (with Numpy-style broadcasting support).
+All inputs and outputs must have the same data type.
+This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Sum, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # List of tensors for sum.
+        # input is variadic [1,infty) just use self.input to access whole list
+        # Output tensor.
+        self.o_sum = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Sum, self).accept(visitor, network)
+        visitor.visit_sum(self, network)
+
+    @classmethod
+    def create_op(cls, i_data_0: str, o_sum: str):
+        attributes = {
+        }
+        return cls([i_data_0], [o_sum], None, None, None, attributes, None)
+
+
+class Shrink(Operation):
+    """
+Shrink takes one input data (Tensor<numeric>) and produces one Tensor output,
+having same datatype and shape with input. It has two attributes, lambd and
+bias. The formula of this operator is: If x < -lambd, y = x + bias;
+If x > lambd, y = x - bias; Otherwise, y = 0.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Shrink, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.bias = self.attributes.get('bias')
+        self.lambd = self.attributes.get('lambd')
+        # The input data as Tensor.
+        self.i_input = self.input[0]
+        # The output.
         self.o_output = self.output[0]
 
     def accept(self, visitor, network):
-        super(Clip, self).accept(visitor, network)
-        visitor.visit_clip(self, network)
+        super(Shrink, self).accept(visitor, network)
+        visitor.visit_shrink(self, network)
 
     @classmethod
-    def create_op(cls, i_input: str, o_output: str, max: OnnxAttribute, min: OnnxAttribute):
+    def create_op(cls, i_input: str, o_output: str, bias: OnnxAttribute, lambd: OnnxAttribute):
         attributes = {
-            'max': max,
-            'min': min,
+            'bias': bias,
+            'lambd': lambd,
         }
         return cls([i_input], [o_output], None, None, None, attributes, None)
 
 
-class RandomUniformLike(Operation):
+class Tanh(Operation):
     """
-Generate a tensor with random values drawn from a uniform distribution. 
-The shape of the output tensor is copied from the shape of the input tensor, 
-and the parameters of the uniform distribution are specified by `low` and `high`.
-
-The data type is specified by the 'dtype' argument, or copied from the input tensor if not provided. 
-The 'dtype' argument must be one of the data types specified in the 'DataType' enum field in the
-TensorProto message and be valid as an output type.
+Calculates the hyperbolic tangent of the given input tensor element-wise.
     """
 
     def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(RandomUniformLike, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
-        self.dtype = self.attributes.get('dtype')
-        self.high = self.attributes.get('high')
-        self.low = self.attributes.get('low')
-        self.seed = self.attributes.get('seed')
-        # Input tensor to copy shape and optionally type information from.
+        super(Tanh, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
         self.i_input = self.input[0]
-        # Output tensor of random values drawn from uniform distribution
+        # The hyperbolic tangent values of the input tensor computed element-wise
         self.o_output = self.output[0]
 
     def accept(self, visitor, network):
-        super(RandomUniformLike, self).accept(visitor, network)
-        visitor.visit_randomuniformlike(self, network)
+        super(Tanh, self).accept(visitor, network)
+        visitor.visit_tanh(self, network)
 
     @classmethod
-    def create_op(cls, i_input: str, o_output: str, dtype: OnnxAttribute, high: OnnxAttribute, low: OnnxAttribute, seed: OnnxAttribute):
+    def create_op(cls, i_input: str, o_output: str):
+        attributes = {
+        }
+        return cls([i_input], [o_output], None, None, None, attributes, None)
+
+
+class Transpose(Operation):
+    """
+Transpose the input tensor similar to numpy.transpose. For example, when
+perm=(1, 0, 2), given an input tensor of shape (1, 2, 3), the output shape
+will be (2, 1, 3).
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Transpose, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.perm = self.attributes.get('perm')
+        # An input tensor.
+        self.i_data = self.input[0]
+        # Transposed output.
+        self.o_transposed = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Transpose, self).accept(visitor, network)
+        visitor.visit_transpose(self, network)
+
+    @classmethod
+    def create_op(cls, i_data: str, o_transposed: str, perm: OnnxAttribute):
+        attributes = {
+            'perm': perm,
+        }
+        return cls([i_data], [o_transposed], None, None, None, attributes, None)
+
+
+class Unsqueeze(Operation):
+    """
+Insert single-dimensional entries to the shape of an input tensor (`data`).
+Takes one required argument `axes` - which contains a list of dimension indices and this operator will insert a dimension of value `1` into the corresponding index of the output tensor (`expanded`).
+
+For example:
+  Given an input tensor (`data`) of shape [3, 4, 5], then
+  Unsqueeze(data, axes=[0, 4]) outputs a tensor (`expanded`) containing same data as `data` but with shape [1, 3, 4, 5, 1].
+
+The attribute `axes` should not contain any duplicate entries. It is an error if it contains duplicates.
+The rank of the output tensor (`output_rank`) is the rank of the input tensor (`data`) plus the number of values in `axes`.
+Each value in `axes` should be within the (inclusive) range [-output_rank , output_rank - 1]. 
+The order of values in `axes` does not matter and can come in any order. 
+
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Unsqueeze, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axes = self.attributes.get('axes')
+        # Original tensor
+        self.i_data = self.input[0]
+        # Reshaped tensor with same data as input.
+        self.o_expanded = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Unsqueeze, self).accept(visitor, network)
+        visitor.visit_unsqueeze(self, network)
+
+    @classmethod
+    def create_op(cls, i_data: str, o_expanded: str, axes: OnnxAttribute):
+        attributes = {
+            'axes': axes,
+        }
+        return cls([i_data], [o_expanded], None, None, None, attributes, None)
+
+
+class Upsample(Operation):
+    """
+Upsample the input tensor.
+Each dimension value of the output tensor is:
+  output_dimension = floor(input_dimension * scale).
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Upsample, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.mode = self.attributes.get('mode')
+        # N-D tensor
+        self.i_X = self.input[0]
+        # The scale array along each dimension. It takes value greater than or equal to 1. The number of elements of 'scales' should be the same as the rank of input 'X'.
+        self.i_scales = self.input[1]
+        # N-D tensor after resizing
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Upsample, self).accept(visitor, network)
+        visitor.visit_upsample(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, i_scales: str, o_Y: str, mode: OnnxAttribute):
+        attributes = {
+            'mode': mode,
+        }
+        return cls([i_X, i_scales], [o_Y], None, None, None, attributes, None)
+
+
+class SVMClassifier(Operation):
+    """
+    Support Vector Machine classifier
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(SVMClassifier, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.classlabels_ints = self.attributes.get('classlabels_ints')
+        self.classlabels_strings = self.attributes.get('classlabels_strings')
+        self.coefficients = self.attributes.get('coefficients')
+        self.kernel_params = self.attributes.get('kernel_params')
+        self.kernel_type = self.attributes.get('kernel_type')
+        self.post_transform = self.attributes.get('post_transform')
+        self.prob_a = self.attributes.get('prob_a')
+        self.prob_b = self.attributes.get('prob_b')
+        self.rho = self.attributes.get('rho')
+        self.support_vectors = self.attributes.get('support_vectors')
+        self.vectors_per_class = self.attributes.get('vectors_per_class')
+        # Data to be classified.
+        self.i_X = self.input[0]
+        # Classification outputs (one class per example).
+        self.o_Y = self.output[0]
+        # Class scores (one per class per example), if prob_a and prob_b are provided they are probabilities for each class, otherwise they are raw scores.
+        self.o_Z = self.output[1]
+
+    def accept(self, visitor, network):
+        super(SVMClassifier, self).accept(visitor, network)
+        visitor.visit_svmclassifier(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, o_Z: str, classlabels_ints: OnnxAttribute, classlabels_strings: OnnxAttribute, coefficients: OnnxAttribute, kernel_params: OnnxAttribute, kernel_type: OnnxAttribute, post_transform: OnnxAttribute, prob_a: OnnxAttribute, prob_b: OnnxAttribute, rho: OnnxAttribute, support_vectors: OnnxAttribute, vectors_per_class: OnnxAttribute):
+        attributes = {
+            'classlabels_ints': classlabels_ints,
+            'classlabels_strings': classlabels_strings,
+            'coefficients': coefficients,
+            'kernel_params': kernel_params,
+            'kernel_type': kernel_type,
+            'post_transform': post_transform,
+            'prob_a': prob_a,
+            'prob_b': prob_b,
+            'rho': rho,
+            'support_vectors': support_vectors,
+            'vectors_per_class': vectors_per_class,
+        }
+        return cls([i_X], [o_Y, o_Z], None, None, None, attributes, None)
+
+
+class Xor(Operation):
+    """
+Returns the tensor resulted from performing the `xor` logical operation
+elementwise on the input tensors `A` and `B` (with Numpy-style broadcasting support).
+
+This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Xor, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # First input operand for the logical operator.
+        self.i_A = self.input[0]
+        # Second input operand for the logical operator.
+        self.i_B = self.input[1]
+        # Result tensor.
+        self.o_C = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Xor, self).accept(visitor, network)
+        visitor.visit_xor(self, network)
+
+    @classmethod
+    def create_op(cls, i_A: str, i_B: str, o_C: str):
+        attributes = {
+        }
+        return cls([i_A, i_B], [o_C], None, None, None, attributes, None)
+
+
+class Acos(Operation):
+    """
+Calculates the arccosine (inverse of cosine) of the given input tensor, element-wise.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Acos, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_input = self.input[0]
+        # The arccosine of the input tensor computed element-wise
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Acos, self).accept(visitor, network)
+        visitor.visit_acos(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, o_output: str):
+        attributes = {
+        }
+        return cls([i_input], [o_output], None, None, None, attributes, None)
+
+
+class Asin(Operation):
+    """
+Calculates the arcsine (inverse of sine) of the given input tensor, element-wise.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Asin, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_input = self.input[0]
+        # The arcsine of the input tensor computed element-wise
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Asin, self).accept(visitor, network)
+        visitor.visit_asin(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, o_output: str):
+        attributes = {
+        }
+        return cls([i_input], [o_output], None, None, None, attributes, None)
+
+
+class Atan(Operation):
+    """
+Calculates the arctangent (inverse of tangent) of the given input tensor, element-wise.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Atan, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_input = self.input[0]
+        # The arctangent of the input tensor computed element-wise
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Atan, self).accept(visitor, network)
+        visitor.visit_atan(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, o_output: str):
+        attributes = {
+        }
+        return cls([i_input], [o_output], None, None, None, attributes, None)
+
+
+class Cos(Operation):
+    """
+Calculates the cosine of the given input tensor, element-wise.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Cos, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_input = self.input[0]
+        # The cosine of the input tensor computed element-wise
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Cos, self).accept(visitor, network)
+        visitor.visit_cos(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, o_output: str):
+        attributes = {
+        }
+        return cls([i_input], [o_output], None, None, None, attributes, None)
+
+
+class Sin(Operation):
+    """
+Calculates the sine of the given input tensor, element-wise.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Sin, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_input = self.input[0]
+        # The sine of the input tensor computed element-wise
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Sin, self).accept(visitor, network)
+        visitor.visit_sin(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, o_output: str):
+        attributes = {
+        }
+        return cls([i_input], [o_output], None, None, None, attributes, None)
+
+
+class Tan(Operation):
+    """
+Calculates the tangent of the given input tensor, element-wise.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Tan, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_input = self.input[0]
+        # The tangent of the input tensor computed element-wise
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Tan, self).accept(visitor, network)
+        visitor.visit_tan(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, o_output: str):
+        attributes = {
+        }
+        return cls([i_input], [o_output], None, None, None, attributes, None)
+
+
+class Multinomial(Operation):
+    """
+Generate a tensor of samples from a multinomial distribution according to the probabilities
+of each of the possible outcomes.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Multinomial, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.dtype = self.attributes.get('dtype')
+        self.sample_size = self.attributes.get('sample_size')
+        self.seed = self.attributes.get('seed')
+        # Input tensor with shape [batch_size, class_size], where class_size is the number of all possible outcomes. Each value along the axis zero represents the unnormalized log-probability of each corresponding outcome in a batch.
+        self.i_input = self.input[0]
+        # Output tensor with shape [batch_size, sample_size], where sample_size is the number of times to sample. Each value along the axis zero represents the outcome of the corresponding sample in a batch.
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Multinomial, self).accept(visitor, network)
+        visitor.visit_multinomial(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, o_output: str, dtype: OnnxAttribute, sample_size: OnnxAttribute, seed: OnnxAttribute):
         attributes = {
             'dtype': dtype,
-            'high': high,
-            'low': low,
+            'sample_size': sample_size,
             'seed': seed,
         }
         return cls([i_input], [o_output], None, None, None, attributes, None)
 
 
-class LeakyRelu(Operation):
+class Scan(Operation):
     """
-LeakyRelu takes input data (Tensor<T>) and an argument alpha, and produces one
-output data (Tensor<T>) where the function `f(x) = alpha * x for x < 0`,
-`f(x) = x for x >= 0`, is applied to the data tensor elementwise.
+Scan can be used to iterate over one or more scan_input tensors,
+constructing zero or more scan_output tensors. It combines ideas from general recurrences,
+functional programming constructs such as scan, fold, map, and zip and is intended to enable
+generalizations of RNN-like constructs for sequence-to-sequence processing.
+Other tensors (referred to as state_variables here) can be used to carry a state
+when iterating from one element to another (similar to hidden-state in RNNs, also referred
+to as loop-carried dependences in the context of loops).
+Many common usages involve a single scan_input tensor (where functionality
+similar to scan, fold and map can be obtained). When more than one scan_input is used,
+a behavior similar to zip is obtained.
+
+The attribute body must be a graph, specifying the computation to be performed in
+every iteration. It takes as input the current values of the state_variables and
+the current iterated element of the scan_inputs. It must return the (updated) values
+of the state_variables and zero or more scan_output_element tensors. The values of the
+scan_output_element tensors are concatenated over all the iterations to produce the
+scan_output values of the scan construct (similar to the concatenated intermediate
+hidden-state values of RNN-like constructs). All the output tensors (state_variables as
+well as scan_output_element tensors) are required to have the same shape in each iteration
+of the loop (a restriction imposed to enable efficient memory allocation).
+
+Note that the iterated element passed to the body subgraph does not have a sequence
+axis. It will have a rank one less than the rank of the corresponding scan_input.
+
+The scan operation returns the final values of the state_variables as well as the
+scan_outputs.
+
+The optional attribute scan_input_directions specifies the direction (forward or backward)
+for each scan input. If this attribute is omitted, all sequences are scanned in the forward
+direction. A bidirectional scan may be performed by specifying the same tensor input twice
+in the scan_inputs, once with a forward direction, and once with a backward direction.
+
+The scan_output of the operation is produced by concatenating the scan_output_element
+values produced by the body in each iteration.  The optional attribute scan_output_directions
+specifies the direction in which scan_output is constructed (by appending or prepending the
+scan_output_element to scan_output in each iteration) for each scan_output. If this attribute
+is omitted, the scan_output_element is appended to the scan_output in each iteration.
+
+The optional attribute scan_input_axes specifies the axis to be scanned for each scan_input.
+If omitted, every scan_input will be scanned in axis 0. For example, if axis 0 is the
+batch axis and axis 1 is the time axis (to be scanned), specify an axis value of 1.
+Note that scanning a non-zero axis may be less efficient than scanning axis zero.
+
+The optional attribute scan_output_axes specifies the axis along which the scan_outputs
+are accumulated for each scan_output. For example, if axis 1 is the time axis (to be
+scanned) for both inputs and outputs, specify a scan_input axis and scan_output axis
+value of 1.
+
+Note that because of the ONNX restriction that only the last parameter of an operator can
+be variadic, the initial-states and scan-inputs are listed together as one input parameter.
+Similarly, the final-states and scan-outputs are listed together as one output parameter.
+The attribute num_scan_inputs indicates the number M of scan-inputs.
+
+The behavior of
+
+    Scan <
+        num_scan_inputs = m,
+        body = loop-body,
+        scan_input_axes = [axis_1, ..., axis_m]
+    > (init_1, ..., init_n, scan_1, ..., scan_m)
+
+is equivalent to the following pseudo-code:
+
+    // scan_i.shape[axis_i] denotes the (max) sequence-length of scan_i
+    // scan_i.shape[axis_i] is required to be equal to scan_j.shape[axis_j] for all i,j.
+    sequence_length = scan_1.shape[axis_1];
+
+    // initialize state-variables
+    st_1 = init_1; ... st_n = init_n;
+    // initialize scan-output variables: [] denotes an empty tensor
+    scan_out_1 = []; ...; scan_out_k = [];
+    // identify number of iterations:
+
+    // execute loop
+    for (int t = 0; t < sequence_length; ++t) {
+        // generate the scan-input elements: the notation T<axis=k>[t] indicates the sub-tensor
+        // of rank one less than T obtained by indexing T at position t along axis k.
+        si_1 = scan_1<axis=axis_1>[t];
+        ... ;
+        si_m = scan_m<axis=axis_m>[t];
+        // execute loop-body
+        st_1, ..., st_n, so_1, ..., so_k = loop-body(st_1, ..., st_n, si_1, ..., si_m)
+        // accumulate the scan-output elements
+        scan_out_1 = Concat<axis=0>(scan_out_1, so_1); ... ; scan_out_k = Concat<axis=0>(scan_out_k, so_k);
+    }
+
+    return st_1, ..., st_n, scan_out_1, ..., scan_out_k;
+
+*Sample usage: Encoding RNN using a Scan*
+
+The following example shows how a simple RNN over an input tensor %X, with weight tensor %Wi,
+recurrence weight tensor %Ri, bias tensors %Wbi and %Rbi, and initial hidden-state %H_0 can
+be encoded as a ScanLoop. Note that the loop-body is a nested graph, and it directly computes
+%Wi, %Ri, %Wbi, and %Rbi (typically constants or initializers in the body graph). If these
+values are computed in the outer graph, they need to be passed in as extra state_variables.
+
+    graph rnn-encoding {
+      %H_0 = ... 
+      %X = ...
+      %Y_h, %Y = Scan[body = <graph rnn-cell-1>, num_scan_inputs=1](%H_0, %X)
+      return %Y, %Y_h
+    }
+
+    graph rnn-cell-1 (
+      %H_tminus1[FLOAT, tensor]
+      %X_t[FLOAT, tensor]
+    ) {
+      %Wi = ...
+      %Ri = ...
+      %Wbi = ...
+      %Rbi = ...
+      %t1 = X_t * (Wi^T)
+      %t2 = H_tminus1*(Ri^T)
+      %t3 = Add(%t1, %t2)
+      %t4 = Add(%t3, %Wbi)
+      %t5 = Add(%t4, %Rbi)
+      %Ht = Tanh(%t5)
+      %Accumulate = Identity(%Ht)
+      return %Ht, %Accumulate
+    }
+
     """
 
     def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(LeakyRelu, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        super(Scan, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.body = self.attributes.get('body')
+        self.num_scan_inputs = self.attributes.get('num_scan_inputs')
+        self.scan_input_axes = self.attributes.get('scan_input_axes')
+        self.scan_input_directions = self.attributes.get('scan_input_directions')
+        self.scan_output_axes = self.attributes.get('scan_output_axes')
+        self.scan_output_directions = self.attributes.get('scan_output_directions')
+        # Initial values of the loop's N state variables followed by M scan_inputs
+        # input is variadic [1,infty) just use self.input to access whole list
+        # Final values of the loop's N state variables followed by K scan_outputs
+        # output is variadic [1,infty) just use self.output to access whole list
+
+    def accept(self, visitor, network):
+        super(Scan, self).accept(visitor, network)
+        visitor.visit_scan(self, network)
+
+    @classmethod
+    def create_op(cls, i_initial_state_and_scan_inputs: str, o_final_state_and_scan_outputs: str, body: OnnxAttribute, num_scan_inputs: OnnxAttribute, scan_input_axes: OnnxAttribute, scan_input_directions: OnnxAttribute, scan_output_axes: OnnxAttribute, scan_output_directions: OnnxAttribute):
+        attributes = {
+            'body': body,
+            'num_scan_inputs': num_scan_inputs,
+            'scan_input_axes': scan_input_axes,
+            'scan_input_directions': scan_input_directions,
+            'scan_output_axes': scan_output_axes,
+            'scan_output_directions': scan_output_directions,
+        }
+        return cls([i_initial_state_and_scan_inputs], [o_final_state_and_scan_outputs], None, None, None, attributes, None)
+
+
+class Compress(Operation):
+    """
+    Selects slices from an input tensor along a given axis where condition evaluates to True for each axis index.
+    In case axis is not provided, input is flattened before elements are selected.
+    Compress behaves like numpy.compress: https://docs.scipy.org/doc/numpy/reference/generated/numpy.compress.html
+        """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Compress, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axis = self.attributes.get('axis')
+        # Tensor of rank r >= 1.
+        self.i_input = self.input[0]
+        # Rank 1 tensor of booleans to indicate which slices or data elements to be selected. Its length can be less than the input length along the axis or the flattened input size if axis is not specified. In such cases data slices or elements exceeding the condition length are discarded.
+        self.i_condition = self.input[1]
+        # Tensor of rank r if axis is specified. Otherwise output is a Tensor of rank 1.
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Compress, self).accept(visitor, network)
+        visitor.visit_compress(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, i_condition: str, o_output: str, axis: OnnxAttribute):
+        attributes = {
+            'axis': axis,
+        }
+        return cls([i_input, i_condition], [o_output], None, None, None, attributes, None)
+
+
+class ConstantOfShape(Operation):
+    """
+Generate a tensor with given value and shape.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(ConstantOfShape, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.value = self.attributes.get('value')
+        # 1D tensor. The shape of the expected output tensor. If empty tensor is given, the output would be a scalar.
+        self.i_input = self.input[0]
+        # Output tensor of shape specified by 'input'.If attribute 'value' is specified, the value and datatype of the output tensor is taken from 'value'.If attribute 'value' is not specified, the value in the output defaults to 0, and the datatype defaults to float32.
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(ConstantOfShape, self).accept(visitor, network)
+        visitor.visit_constantofshape(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, o_output: str, value: OnnxAttribute):
+        attributes = {
+            'value': value,
+        }
+        return cls([i_input], [o_output], None, None, None, attributes, None)
+
+
+class MaxUnpool(Operation):
+    """
+MaxUnpool essentially computes the partial inverse of the MaxPool op.
+ The input information to this op is typically the the output information from a MaxPool op. The first
+ input tensor X is the tensor that needs to be unpooled, which is typically the pooled tensor (first output)
+ from MaxPool. The second input tensor, I, contains the indices to the (locally maximal) elements corrsponding
+ to the elements in the first input tensor X. Input tensor I is typically the second output of the MaxPool op.
+ The third (optional) input is a tensor that specifies the output size of the unpooling operation.
+
+MaxUnpool is intended to do 'partial' inverse of the MaxPool op. 'Partial' because all the non-maximal
+ values from the original input to MaxPool are set to zero in the output of the MaxUnpool op. Pooling
+ the result of an unpooling operation should give back the original input to the unpooling op.
+
+MaxUnpool can produce the same output size for several input sizes, which makes unpooling op ambiguous.
+ The third input argument, output_size, is meant to disambiguate the op and produce output tensor of
+ known/predictable size.
+
+In addition to the inputs, MaxUnpool takes three attributes, namely kernel_shape, strides, and pads,
+ which define the exact unpooling op. The attributes typically have the same values as the corrsponding
+ pooling op that the unpooling op is trying to invert.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(MaxUnpool, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.kernel_shape = self.attributes.get('kernel_shape')
+        self.pads = self.attributes.get('pads')
+        self.strides = self.attributes.get('strides')
+        # Input data tensor that has to be unpooled. This tensor is typically the first output of the MaxPool op.Dimensions for image case are (N x C x H x W), where N is the batch size, C is the number of channels, and H and W are the height and the width of the data. For non-image case, the dimensions are in the form of (N x C x D1 x D2 ... Dn), where N is the batch size. Optionally, if dimension denotation is in effect, the operation expects the input data tensor to arrive with the dimension denotation of [DATA_BATCH, DATA_CHANNEL, DATA_FEATURE, DATA_FEATURE ...].
+        self.i_X = self.input[0]
+        # Input data tensor containing the indices corresponding to elements in the first input tensor X.This tensor is typically the second output of the MaxPool op.Dimensions must be the same as input tensor X. The indices are linear, i.e. computed considering the tensor as flattened 1-D tensor, assuming row-major storage. Also, the linear indices should not consider padding. So the values in indices are in the range [0, N x C x D1 x ... x Dn).
+        self.i_I = self.input[1]
+        # The shape of the output can be explicitly set which will cause pads values to be auto generated. If 'output_shape' is specified, 'pads' values are ignored.
+        # OPTIONAL
+        self.i_output_shape = None if len(self.input) < 3 else self.input[2]
+        # Output data tensor that contains the result of the unpooling.
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(MaxUnpool, self).accept(visitor, network)
+        visitor.visit_maxunpool(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, i_I: str, i_output_shape: str, o_output: str, kernel_shape: OnnxAttribute, pads: OnnxAttribute, strides: OnnxAttribute):
+        attributes = {
+            'kernel_shape': kernel_shape,
+            'pads': pads,
+            'strides': strides,
+        }
+        return cls([i_X, i_I, i_output_shape], [o_output], None, None, None, attributes, None)
+
+
+class Scatter(Operation):
+    """
+This operator is deprecated. Please use ScatterElements, which provides the same functionality.
+
+Scatter takes three inputs `data`, `updates`, and `indices` of the same
+rank r >= 1 and an optional attribute axis that identifies an axis of `data`
+(by default, the outer-most axis, that is axis 0). The output of the operation
+is produced by creating a copy of the input `data`, and then updating its value
+to values specified by `updates` at specific index positions specified by
+`indices`. Its output shape is the same as the shape of `data`.
+
+For each entry in `updates`, the target index in `data` is obtained by combining
+the corresponding entry in `indices` with the index of the entry itself: the
+index-value for dimension = axis is obtained from the value of the corresponding
+entry in `indices` and the index-value for dimension != axis is obtained from the
+index of the entry itself.
+
+For instance, in a 2-D tensor case, the update corresponding to the [i][j] entry
+is performed as below:
+```
+  output[indices[i][j]][j] = updates[i][j] if axis = 0, 
+  output[i][indices[i][j]] = updates[i][j] if axis = 1,
+```
+
+This operator is the inverse of GatherElements. It is similar to Torch's Scatter operation.
+
+Example 1:
+```
+  data = [
+      [0.0, 0.0, 0.0],
+      [0.0, 0.0, 0.0],
+      [0.0, 0.0, 0.0],
+  ]
+  indices = [
+      [1, 0, 2],
+      [0, 2, 1],
+  ]
+  updates = [
+      [1.0, 1.1, 1.2],
+      [2.0, 2.1, 2.2],
+  ]
+  output = [
+      [2.0, 1.1, 0.0]
+      [1.0, 0.0, 2.2]
+      [0.0, 2.1, 1.2]
+  ]
+```
+Example 2:
+```
+  data = [[1.0, 2.0, 3.0, 4.0, 5.0]]
+  indices = [[1, 3]]
+  updates = [[1.1, 2.1]]
+  axis = 1
+  output = [[1.0, 1.1, 3.0, 2.1, 5.0]]
+```
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Scatter, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axis = self.attributes.get('axis')
+        # Tensor of rank r >= 1.
+        self.i_data = self.input[0]
+        # Tensor of int32/int64 indices, of r >= 1 (same rank as input). All index values are expected to be within bounds [-s, s-1] along axis of size s. It is an error if any of the index values are out of bounds.
+        self.i_indices = self.input[1]
+        # Tensor of rank r >=1 (same rank and shape as indices)
+        self.i_updates = self.input[2]
+        # Tensor of rank r >= 1 (same rank as input).
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Scatter, self).accept(visitor, network)
+        visitor.visit_scatter(self, network)
+
+    @classmethod
+    def create_op(cls, i_data: str, i_indices: str, i_updates: str, o_output: str, axis: OnnxAttribute):
+        attributes = {
+            'axis': axis,
+        }
+        return cls([i_data, i_indices, i_updates], [o_output], None, None, None, attributes, None)
+
+
+class Sinh(Operation):
+    """
+Calculates the hyperbolic sine of the given input tensor element-wise.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Sinh, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_input = self.input[0]
+        # The hyperbolic sine values of the input tensor computed element-wise
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Sinh, self).accept(visitor, network)
+        visitor.visit_sinh(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, o_output: str):
+        attributes = {
+        }
+        return cls([i_input], [o_output], None, None, None, attributes, None)
+
+
+class Cosh(Operation):
+    """
+Calculates the hyperbolic cosine of the given input tensor element-wise.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Cosh, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_input = self.input[0]
+        # The hyperbolic cosine values of the input tensor computed element-wise
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Cosh, self).accept(visitor, network)
+        visitor.visit_cosh(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, o_output: str):
+        attributes = {
+        }
+        return cls([i_input], [o_output], None, None, None, attributes, None)
+
+
+class Asinh(Operation):
+    """
+Calculates the hyperbolic arcsine of the given input tensor element-wise.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Asinh, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_input = self.input[0]
+        # The hyperbolic arcsine values of the input tensor computed element-wise
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Asinh, self).accept(visitor, network)
+        visitor.visit_asinh(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, o_output: str):
+        attributes = {
+        }
+        return cls([i_input], [o_output], None, None, None, attributes, None)
+
+
+class Acosh(Operation):
+    """
+Calculates the hyperbolic arccosine of the given input tensor element-wise.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Acosh, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_input = self.input[0]
+        # The hyperbolic arccosine values of the input tensor computed element-wise
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Acosh, self).accept(visitor, network)
+        visitor.visit_acosh(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, o_output: str):
+        attributes = {
+        }
+        return cls([i_input], [o_output], None, None, None, attributes, None)
+
+
+class NonMaxSuppression(Operation):
+    """
+Filter out boxes that have high intersection-over-union (IOU) overlap with previously selected boxes.
+Bounding boxes with score less than score_threshold are removed. Bounding box format is indicated by attribute center_point_box.
+Note that this algorithm is agnostic to where the origin is in the coordinate system and more generally is invariant to
+orthogonal transformations and translations of the coordinate system; thus translating or reflections of the coordinate system
+result in the same boxes being selected by the algorithm.
+The selected_indices output is a set of integers indexing into the input collection of bounding boxes representing the selected boxes.
+The bounding box coordinates corresponding to the selected indices can then be obtained using the Gather or GatherND operation.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(NonMaxSuppression, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.center_point_box = self.attributes.get('center_point_box')
+        # An input tensor with shape [num_batches, spatial_dimension, 4]. The single box data format is indicated by center_point_box.
+        self.i_boxes = self.input[0]
+        # An input tensor with shape [num_batches, num_classes, spatial_dimension]
+        self.i_scores = self.input[1]
+        # Integer representing the maximum number of boxes to be selected per batch per class. It is a scalar. Default to 0, which means no output.
+        # OPTIONAL
+        self.i_max_output_boxes_per_class = None if len(self.input) < 3 else self.input[2]
+        # Float representing the threshold for deciding whether boxes overlap too much with respect to IOU. It is scalar. Value range [0, 1]. Default to 0.
+        # OPTIONAL
+        self.i_iou_threshold = None if len(self.input) < 4 else self.input[3]
+        # Float representing the threshold for deciding when to remove boxes based on score. It is a scalar.
+        # OPTIONAL
+        self.i_score_threshold = None if len(self.input) < 5 else self.input[4]
+        # selected indices from the boxes tensor. [num_selected_indices, 3], the selected index format is [batch_index, class_index, box_index].
+        self.o_selected_indices = self.output[0]
+
+    def accept(self, visitor, network):
+        super(NonMaxSuppression, self).accept(visitor, network)
+        visitor.visit_nonmaxsuppression(self, network)
+
+    @classmethod
+    def create_op(cls, i_boxes: str, i_scores: str, i_max_output_boxes_per_class: str, i_iou_threshold: str, i_score_threshold: str, o_selected_indices: str, center_point_box: OnnxAttribute):
+        attributes = {
+            'center_point_box': center_point_box,
+        }
+        return cls([i_boxes, i_scores, i_max_output_boxes_per_class, i_iou_threshold, i_score_threshold], [o_selected_indices], None, None, None, attributes, None)
+
+
+class Atanh(Operation):
+    """
+Calculates the hyperbolic arctangent of the given input tensor element-wise.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Atanh, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_input = self.input[0]
+        # The hyperbolic arctangent values of the input tensor computed element-wise
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Atanh, self).accept(visitor, network)
+        visitor.visit_atanh(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, o_output: str):
+        attributes = {
+        }
+        return cls([i_input], [o_output], None, None, None, attributes, None)
+
+
+class Sign(Operation):
+    """
+Calculate the sign of the given input tensor element-wise.
+If input > 0, output 1. if input < 0, output -1. if input == 0, output 0.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Sign, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_input = self.input[0]
+        # The sign of the input tensor computed element-wise. It has the same shape and type of the input.
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Sign, self).accept(visitor, network)
+        visitor.visit_sign(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, o_output: str):
+        attributes = {
+        }
+        return cls([i_input], [o_output], None, None, None, attributes, None)
+
+
+class Erf(Operation):
+    """
+Computes the error function of the given input tensor element-wise.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Erf, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_input = self.input[0]
+        # The error function of the input tensor computed element-wise. It has the same shape and type of the input.
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Erf, self).accept(visitor, network)
+        visitor.visit_erf(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, o_output: str):
+        attributes = {
+        }
+        return cls([i_input], [o_output], None, None, None, attributes, None)
+
+
+class Where(Operation):
+    """
+    Return elements, either from X or Y, depending on condition
+    (with Numpy-style broadcasting support).
+    Where behaves like numpy.where with three parameters:
+    https://docs.scipy.org/doc/numpy/reference/generated/numpy.where.html
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Where, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # When True (nonzero), yield X, otherwise yield Y
+        self.i_condition = self.input[0]
+        # values selected at indices where condition is True
+        self.i_X = self.input[1]
+        # values selected at indices where condition is False
+        self.i_Y = self.input[2]
+        # Tensor of shape equal to the broadcasted shape of condition, X, and Y.
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Where, self).accept(visitor, network)
+        visitor.visit_where(self, network)
+
+    @classmethod
+    def create_op(cls, i_condition: str, i_X: str, i_Y: str, o_output: str):
+        attributes = {
+        }
+        return cls([i_condition, i_X, i_Y], [o_output], None, None, None, attributes, None)
+
+
+class NonZero(Operation):
+    """
+    Returns the indices of the elements that are non-zero
+    (in row-major order - by dimension).
+    NonZero behaves similar to numpy.nonzero:
+    https://docs.scipy.org/doc/numpy/reference/generated/numpy.nonzero.html
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(NonZero, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # input
+        self.i_X = self.input[0]
+        # output (always 2D tensor)
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(NonZero, self).accept(visitor, network)
+        visitor.visit_nonzero(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str):
+        attributes = {
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class MeanVarianceNormalization(Operation):
+    """
+      A MeanVarianceNormalization Function: Perform mean variance normalization
+      on the input tensor X using formula: <br/> ``` (X-EX)/sqrt(E(X-EX)^2) ```
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(MeanVarianceNormalization, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axes = self.attributes.get('axes')
+        # Input tensor
+        self.i_X = self.input[0]
+        # Output tensor
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(MeanVarianceNormalization, self).accept(visitor, network)
+        visitor.visit_meanvariancenormalization(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, axes: OnnxAttribute):
+        attributes = {
+            'axes': axes,
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class StringNormalizer(Operation):
+    """
+StringNormalization performs string operations for basic cleaning.
+This operator has only one input (denoted by X) and only one output
+(denoted by Y). This operator first examines the elements in the X,
+and removes elements specified in "stopwords" attribute.
+After removing stop words, the intermediate result can be further lowercased,
+uppercased, or just returned depending the "case_change_action" attribute.
+This operator only accepts [C]- and [1, C]-tensor.
+If all elements in X are dropped, the output will be the empty value of string tensor with shape [1]
+if input shape is [C] and shape [1, 1] if input shape is [1, C].
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(StringNormalizer, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.case_change_action = self.attributes.get('case_change_action')
+        self.is_case_sensitive = self.attributes.get('is_case_sensitive')
+        self.locale = self.attributes.get('locale')
+        self.stopwords = self.attributes.get('stopwords')
+        # UTF-8 strings to normalize
+        self.i_X = self.input[0]
+        # UTF-8 Normalized strings
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(StringNormalizer, self).accept(visitor, network)
+        visitor.visit_stringnormalizer(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, case_change_action: OnnxAttribute, is_case_sensitive: OnnxAttribute, locale: OnnxAttribute, stopwords: OnnxAttribute):
+        attributes = {
+            'case_change_action': case_change_action,
+            'is_case_sensitive': is_case_sensitive,
+            'locale': locale,
+            'stopwords': stopwords,
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class Mod(Operation):
+    """
+  Performs element-wise binary modulus (with Numpy-style broadcasting support). 
+    The sign of the remainder is the same as that of the Divisor.
+  
+    Mod operator can also behave like C fmod() or numpy.fmod. In this case, the sign of the remainder however, will be the same as the Dividend 
+    (in contrast to integer mod). To force a behavior like numpy.fmod() an 'fmod' Attribute is provided.
+    This attribute is set to 0 by default causing the behavior to be like integer mod. 
+    Setting this attribute to 1 causes the remainder to be calculated similar to that of numpy.fmod().
+
+    If the input type is floating point, then `fmod` attribute must be set to 1.
+  
+    In case of dividend being zero, the results will be platform dependent.
+
+  This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Mod, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.fmod = self.attributes.get('fmod')
+        # Dividend tensor
+        self.i_A = self.input[0]
+        # Divisor tensor
+        self.i_B = self.input[1]
+        # Remainder tensor
+        self.o_C = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Mod, self).accept(visitor, network)
+        visitor.visit_mod(self, network)
+
+    @classmethod
+    def create_op(cls, i_A: str, i_B: str, o_C: str, fmod: OnnxAttribute):
+        attributes = {
+            'fmod': fmod,
+        }
+        return cls([i_A, i_B], [o_C], None, None, None, attributes, None)
+
+
+class ThresholdedRelu(Operation):
+    """
+ThresholdedRelu takes one input data (Tensor<T>) and produces one output data
+(Tensor<T>) where the rectified linear function, y = x for x > alpha, y = 0 otherwise,
+is applied to the tensor elementwise.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(ThresholdedRelu, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
         self.alpha = self.attributes.get('alpha')
         # Input tensor
         self.i_X = self.input[0]
@@ -3830,8 +5127,8 @@ output data (Tensor<T>) where the function `f(x) = alpha * x for x < 0`,
         self.o_Y = self.output[0]
 
     def accept(self, visitor, network):
-        super(LeakyRelu, self).accept(visitor, network)
-        visitor.visit_leakyrelu(self, network)
+        super(ThresholdedRelu, self).accept(visitor, network)
+        visitor.visit_thresholdedrelu(self, network)
 
     @classmethod
     def create_op(cls, i_X: str, o_Y: str, alpha: OnnxAttribute):
@@ -3841,23 +5138,648 @@ output data (Tensor<T>) where the function `f(x) = alpha * x for x < 0`,
         return cls([i_X], [o_Y], None, None, None, attributes, None)
 
 
-class Reciprocal(Operation):
+class MatMulInteger(Operation):
     """
-Reciprocal takes one input data (Tensor<T>) and produces one output data
-(Tensor<T>) where the reciprocal is, y = 1/x, is applied to
-the tensor elementwise.
+Matrix product that behaves like numpy.matmul: https://docs.scipy.org/doc/numpy-1.13.0/reference/generated/numpy.matmul.html.
+The production MUST never overflow. The accumulation may overflow if and only if in 32 bits.
     """
 
     def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
-        super(Reciprocal, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        super(MatMulInteger, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # N-dimensional matrix A
+        self.i_A = self.input[0]
+        # N-dimensional matrix B
+        self.i_B = self.input[1]
+        # Zero point tensor for input 'A'. It's optional and default value is 0. It could be a scalar or a 1-D tensor, which means a per-tensor or per-row quantization. If it's a 1-D tensor, its number of elements should be equal to the number of rows of input 'A'.
+        # OPTIONAL
+        self.i_a_zero_point = None if len(self.input) < 3 else self.input[2]
+        # Scale tensor for input 'B'. It's optional and default value is 0.  It could be a scalar or a 1-D tensor, which means a per-tensor or per-column quantization. If it's a 1-D tensor, its number of elements should be equal to the number of columns of input 'B'.
+        # OPTIONAL
+        self.i_b_zero_point = None if len(self.input) < 4 else self.input[3]
+        # Matrix multiply results from A * B
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(MatMulInteger, self).accept(visitor, network)
+        visitor.visit_matmulinteger(self, network)
+
+    @classmethod
+    def create_op(cls, i_A: str, i_B: str, i_a_zero_point: str, i_b_zero_point: str, o_Y: str):
+        attributes = {
+        }
+        return cls([i_A, i_B, i_a_zero_point, i_b_zero_point], [o_Y], None, None, None, attributes, None)
+
+
+class QLinearMatMul(Operation):
+    """
+Matrix product that behaves like numpy.matmul: https://docs.scipy.org/doc/numpy-1.13.0/reference/generated/numpy.matmul.html.
+It consumes two quantized input tensors, their scales and zero points, scale and zero point of output, and computes the quantized output.
+The quantization formula is y = saturate((x / y_scale) + y_zero_point). For (x / y_scale), it is rounding to nearest ties to even.
+Refer to https://en.wikipedia.org/wiki/Rounding for details. Scale and zero point must have same shape.
+They must be either scalar (per tensor) or 1-D tensor (per row for 'a' and per column for 'b'). If scale and zero point are 1-D tensor,
+the number of elements of scale and zero point tensor of input 'a' and output 'y' should be equal to the number of rows of input 'a',
+and the number of elements of scale and zero point tensor of input 'b' should be equal to the number of columns of input 'b'.
+Production must never overflow, and accumulation may overflow if and only if in 32 bits.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(QLinearMatMul, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # N-dimensional quantized matrix a
+        self.i_a = self.input[0]
+        # scale of quantized input a
+        self.i_a_scale = self.input[1]
+        # zero point of quantized input a
+        self.i_a_zero_point = self.input[2]
+        # N-dimensional quantized matrix b
+        self.i_b = self.input[3]
+        # scale of quantized input b
+        self.i_b_scale = self.input[4]
+        # zero point of quantized input b
+        self.i_b_zero_point = self.input[5]
+        # scale of quantized output y
+        self.i_y_scale = self.input[6]
+        # zero point of quantized output y
+        self.i_y_zero_point = self.input[7]
+        # Quantized matrix multiply results from a * b
+        self.o_y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(QLinearMatMul, self).accept(visitor, network)
+        visitor.visit_qlinearmatmul(self, network)
+
+    @classmethod
+    def create_op(cls, i_a: str, i_a_scale: str, i_a_zero_point: str, i_b: str, i_b_scale: str, i_b_zero_point: str, i_y_scale: str, i_y_zero_point: str, o_y: str):
+        attributes = {
+        }
+        return cls([i_a, i_a_scale, i_a_zero_point, i_b, i_b_scale, i_b_zero_point, i_y_scale, i_y_zero_point], [o_y], None, None, None, attributes, None)
+
+
+class ConvInteger(Operation):
+    """
+The integer convolution operator consumes an input tensor, its zero-point, a filter, and its zero-point,
+and computes the output. The production MUST never overflow. The accumulation may overflow if and only if in 32 bits.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(ConvInteger, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.auto_pad = self.attributes.get('auto_pad')
+        self.dilations = self.attributes.get('dilations')
+        self.group = self.attributes.get('group')
+        self.kernel_shape = self.attributes.get('kernel_shape')
+        self.pads = self.attributes.get('pads')
+        self.strides = self.attributes.get('strides')
+        # Input data tensor from previous layer; has size (N x C x H x W), where N is the batch size, C is the number of channels, and H and W are the height and width. Note that this is for the 2D image. Otherwise the size is (N x C x D1 x D2 ... x Dn). Optionally, if dimension denotation is in effect, the operation expects input data tensor to arrive with the dimension denotation of [DATA_BATCH, DATA_CHANNEL, DATA_FEATURE, DATA_FEATURE ...].
+        self.i_x = self.input[0]
+        # The weight tensor that will be used in the convolutions; has size (M x C/group x kH x kW), where C is the number of channels, and kH and kW are the height and width of the kernel, and M is the number of feature maps. For more than 2 dimensions, the kernel shape will be (M x C/group x k1 x k2 x ... x kn), where (k1 x k2 x ... kn) is the dimension of the kernel. Optionally, if dimension denotation is in effect, the operation expects the weight tensor to arrive with the dimension denotation of [FILTER_OUT_CHANNEL, FILTER_IN_CHANNEL, FILTER_SPATIAL, FILTER_SPATIAL ...]. X.shape[1] == (W.shape[1] * group) == C (assuming zero based indices for the shape array). Or in other words FILTER_IN_CHANNEL should be equal to DATA_CHANNEL. 
+        self.i_w = self.input[1]
+        # Zero point tensor for input 'x'. It's optional and default value is 0. It's a scalar, which means a per-tensor/layer quantization.
+        # OPTIONAL
+        self.i_x_zero_point = None if len(self.input) < 3 else self.input[2]
+        # Scale tensor for input 'w'. It's optional and default value is 0.  It could be a scalar or a 1-D tensor, which means a per-tensor/layer or per output channel quantization. If it's a 1-D tensor, its number of elements should be equal to the number of output channels (M)
+        # OPTIONAL
+        self.i_w_zero_point = None if len(self.input) < 4 else self.input[3]
+        # Output data tensor that contains the result of the convolution. The output dimensions are functions of the kernel size, stride size, and pad lengths.
+        self.o_y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(ConvInteger, self).accept(visitor, network)
+        visitor.visit_convinteger(self, network)
+
+    @classmethod
+    def create_op(cls, i_x: str, i_w: str, i_x_zero_point: str, i_w_zero_point: str, o_y: str, auto_pad: OnnxAttribute, dilations: OnnxAttribute, group: OnnxAttribute, kernel_shape: OnnxAttribute, pads: OnnxAttribute, strides: OnnxAttribute):
+        attributes = {
+            'auto_pad': auto_pad,
+            'dilations': dilations,
+            'group': group,
+            'kernel_shape': kernel_shape,
+            'pads': pads,
+            'strides': strides,
+        }
+        return cls([i_x, i_w, i_x_zero_point, i_w_zero_point], [o_y], None, None, None, attributes, None)
+
+
+class QLinearConv(Operation):
+    """
+The convolution operator consumes a quantized input tensor, its scale and zero point,
+a quantized filter, its scale and zero point, and output's scale and zero point,
+and computes the quantized output. Each scale and zero-point pair must have same shape.
+It means they must be either scalars (per tensor) or 1-D tensors (per output channel).
+Each input or output and its related zero point must have same type.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(QLinearConv, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.auto_pad = self.attributes.get('auto_pad')
+        self.dilations = self.attributes.get('dilations')
+        self.group = self.attributes.get('group')
+        self.kernel_shape = self.attributes.get('kernel_shape')
+        self.pads = self.attributes.get('pads')
+        self.strides = self.attributes.get('strides')
+        # Input data tensor from previous layer; has size (N x C x H x W), where N is the batch size, C is the number of channels, and H and W are the height and width. Note that this is for the 2D image. Otherwise the size is (N x C x D1 x D2 ... x Dn). Optionally, if dimension denotation is in effect, the operation expects input data tensor to arrive with the dimension denotation of [DATA_BATCH, DATA_CHANNEL, DATA_FEATURE, DATA_FEATURE ...].
+        self.i_x = self.input[0]
+        # Scale tensor for input 'x'. It's a scalar, which means a per-tensor/layer quantization.
+        self.i_x_scale = self.input[1]
+        # Zero point tensor for input 'x'. It's a scalar, which means a per-tensor/layer quantization.
+        self.i_x_zero_point = self.input[2]
+        # The weight tensor that will be used in the convolutions; has size (M x C/group x kH x kW), where C is the number of channels, and kH and kW are the height and width of the kernel, and M is the number of feature maps. For more than 2 dimensions, the kernel shape will be (M x C/group x k1 x k2 x ... x kn), where (k1 x k2 x ... kn) is the dimension of the kernel. Optionally, if dimension denotation is in effect, the operation expects the weight tensor to arrive with the dimension denotation of [FILTER_OUT_CHANNEL, FILTER_IN_CHANNEL, FILTER_SPATIAL, FILTER_SPATIAL ...]. X.shape[1] == (W.shape[1] * group) == C (assuming zero based indices for the shape array). Or in other words FILTER_IN_CHANNEL should be equal to DATA_CHANNEL. 
+        self.i_w = self.input[3]
+        # Scale tensor for input 'w'. It could be a scalar or a 1-D tensor, which means a per-tensor/layer or per output channel quantization. If it's a 1-D tensor, its number of elements should be equal to the number of output channels (M).
+        self.i_w_scale = self.input[4]
+        # Scale tensor for input 'w'. It could be a scalar or a 1-D tensor, which means a per-tensor/layer or per output channel quantization. If it's a 1-D tensor, its number of elements should be equal to the number of output channels (M).
+        self.i_w_zero_point = self.input[5]
+        # Scale tensor for output 'y'. It's a scalar, which means a per-tensor/layer quantization.
+        self.i_y_scale = self.input[6]
+        # Scale tensor for output 'y'. It's a scalar, which means a per-tensor/layer quantization.
+        self.i_y_zero_point = self.input[7]
+        # Optional 1D bias to be added to the convolution, has size of M.
+        # OPTIONAL
+        self.i_B = None if len(self.input) < 9 else self.input[8]
+        # Output data tensor that contains the result of the convolution. The output dimensions are functions of the kernel size, stride size, and pad lengths.
+        self.o_y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(QLinearConv, self).accept(visitor, network)
+        visitor.visit_qlinearconv(self, network)
+
+    @classmethod
+    def create_op(cls, i_x: str, i_x_scale: str, i_x_zero_point: str, i_w: str, i_w_scale: str, i_w_zero_point: str, i_y_scale: str, i_y_zero_point: str, i_B: str, o_y: str, auto_pad: OnnxAttribute, dilations: OnnxAttribute, group: OnnxAttribute, kernel_shape: OnnxAttribute, pads: OnnxAttribute, strides: OnnxAttribute):
+        attributes = {
+            'auto_pad': auto_pad,
+            'dilations': dilations,
+            'group': group,
+            'kernel_shape': kernel_shape,
+            'pads': pads,
+            'strides': strides,
+        }
+        return cls([i_x, i_x_scale, i_x_zero_point, i_w, i_w_scale, i_w_zero_point, i_y_scale, i_y_zero_point, i_B], [o_y], None, None, None, attributes, None)
+
+
+class QuantizeLinear(Operation):
+    """
+The linear per-tensor/layer quantization operator. It consumes a high precision tensor, a scale, a zero point to compute the low precision / quantized tensor.
+The quantization formula is y = saturate ((x / y_scale) + y_zero_point). For saturation, it saturates to [0, 255] if it's uint8, or [-128, 127] if it's int8.
+For (x / y_scale), it's rounding to nearest ties to even. Refer to https://en.wikipedia.org/wiki/Rounding for details. 'y_zero_point' and 'y' must have same type.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(QuantizeLinear, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # N-D full precision Input tensor to be quantized.
+        self.i_x = self.input[0]
+        # Scale for doing quantization to get 'y'. It's a scalar, which means a per-tensor/layer quantization.
+        self.i_y_scale = self.input[1]
+        # Zero point for doing quantization to get 'y'. It's a scalar, which means a per-tensor/layer quantization. Default value is uint8 typed 0 if it's not specified.
+        # OPTIONAL
+        self.i_y_zero_point = None if len(self.input) < 3 else self.input[2]
+        # N-D quantized output tensor. It has same shape as input 'x'.
+        self.o_y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(QuantizeLinear, self).accept(visitor, network)
+        visitor.visit_quantizelinear(self, network)
+
+    @classmethod
+    def create_op(cls, i_x: str, i_y_scale: str, i_y_zero_point: str, o_y: str):
+        attributes = {
+        }
+        return cls([i_x, i_y_scale, i_y_zero_point], [o_y], None, None, None, attributes, None)
+
+
+class GatherND(Operation):
+    """
+Given `data` tensor of rank `r` >= 1, and `indices` tensor of rank `q` >= 1, this operator gathers 
+slices of `data` into an output tensor of rank `q + r - indices_shape[-1] - 1`.
+
+`indices` is an q-dimensional integer tensor, best thought of as a `(q-1)`-dimensional tensor of index-tuples into `data`, 
+where each element defines a slice of `data`
+
+Some salient points about the inputs' rank and shape:
+ 
+1) r >= 1 and q >= 1 are to be honored. There is no dependency condition to be met between ranks `r` and `q`
+
+2) The `indices_shape[-1]` should have a value between 1 (inclusive) and rank `r` (inclusive) 
+
+3) All values in `indices` are expected to be within bounds [-s, s-1] along axis of size `s` (i.e.) `-data_shape[i] <= indices[...,i] <= data_shape[i] - 1`.
+   It is an error if any of the index values are out of bounds.
+
+The output is computed as follows:
+
+The output tensor is obtained by mapping each index-tuple in the `indices` tensor to the corresponding slice of the input `data`.
+ 
+1) If `indices_shape[-1] > r` => error condition
+
+2) If `indices_shape[-1] == r`, since the rank of `indices` is `q`, `indices` can be thought of as a `(q-1)`-dimensional tensor
+   containing 1-D tensors of dimension `r`. Let us think of each such `r` ranked tensor as `indices_slice`. 
+   Each *scalar value* corresponding to `data[indices_slice]` is filled into the corresponding location of the `(q-1)`-dimensional tensor 
+   to form the `output` tensor (Example 1 below)
+
+3) If `indices_shape[-1] < r`, since the rank of `indices` is `q`, `indices` can be thought of as a `(q-1)`-dimensional tensor
+   containing 1-D tensors of dimension `< r`. Let us think of each such tensors as `indices_slice`. 
+   Each *tensor slice* corresponding to `data[indices_slice , :]` is filled into the corresponding location of the `(q-1)`-dimensional tensor 
+   to form the `output` tensor (Examples 2, 3, and 4 below)
+
+This operator is the inverse of `ScatterND`.
+
+`Example 1`
+
+  data    = [[0,1],[2,3]]   # data_shape = [2, 2]
+
+  indices = [[0,0],[1,1]]   # indices_shape = [2, 2]
+
+  output  = [0,3]           # output_shape = [2]
+
+`Example 2`
+
+  data    = [[0,1],[2,3]]  # data_shape = [2, 2]
+
+  indices = [[1],[0]]      # indices_shape = [2, 1]
+
+  output  = [[2,3],[0,1]]  # output_shape = [2, 2]
+
+`Example 3`
+
+  data    = [[[0,1],[2,3]],[[4,5],[6,7]]] # data_shape = [2, 2, 2]
+
+  indices = [[0,1],[1,0]]                 # indices_shape = [2, 2]
+
+  output  = [[2,3],[4,5]]                 # output_shape = [2, 2]   
+
+`Example 4`
+
+  data    = [[[0,1],[2,3]],[[4,5],[6,7]]] # data_shape = [2, 2, 2]
+
+  indices = [[[0,1]],[[1,0]]]             # indices_shape = [2, 1, 2]
+
+  output  = [[[2,3]],[[4,5]]]             # output_shape = [2, 1, 2] 
+
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(GatherND, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Tensor of rank r >= 1.
+        self.i_data = self.input[0]
+        # Tensor of rank q >= 1. All index values are expected to be within bounds [-s, s-1] along axis of size s. It is an error if any of the index values are out of bounds.
+        self.i_indices = self.input[1]
+        # Tensor of rank q + r - indices_shape[-1] - 1.
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(GatherND, self).accept(visitor, network)
+        visitor.visit_gathernd(self, network)
+
+    @classmethod
+    def create_op(cls, i_data: str, i_indices: str, o_output: str):
+        attributes = {
+        }
+        return cls([i_data, i_indices], [o_output], None, None, None, attributes, None)
+
+
+class DequantizeLinear(Operation):
+    """
+The linear dequantization operator. It consumes a quantized tensor, a scale, a zero point to compute the full precision tensor.
+The dequantization formula is y = (x - x_zero_point) * x_scale. 'x_scale' and 'x_zero_point' must have same shape.
+'x_zero_point' and 'x' must have same type. 'x' and 'y' must have same shape. In the case of dequantizing int32,
+there's no zero point (zero point is supposed to be 0).
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(DequantizeLinear, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # N-D quantized input tensor to be de-quantized.
+        self.i_x = self.input[0]
+        # Scale for input 'x'. It's a scalar, which means a per-tensor/layer quantization.
+        self.i_x_scale = self.input[1]
+        # Zero point for input 'x'. It's a scalar, which means a per-tensor/layer quantization. It's optional. 0 is the default value when it's not specified.
+        # OPTIONAL
+        self.i_x_zero_point = None if len(self.input) < 3 else self.input[2]
+        # N-D full precision output tensor. It has same shape as input 'x'.
+        self.o_y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(DequantizeLinear, self).accept(visitor, network)
+        visitor.visit_dequantizelinear(self, network)
+
+    @classmethod
+    def create_op(cls, i_x: str, i_x_scale: str, i_x_zero_point: str, o_y: str):
+        attributes = {
+        }
+        return cls([i_x, i_x_scale, i_x_zero_point], [o_y], None, None, None, attributes, None)
+
+
+class IsInf(Operation):
+    """Map infinity to true and other values to false.    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(IsInf, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.detect_negative = self.attributes.get('detect_negative')
+        self.detect_positive = self.attributes.get('detect_positive')
+        # input
+        self.i_X = self.input[0]
+        # output
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(IsInf, self).accept(visitor, network)
+        visitor.visit_isinf(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, detect_negative: OnnxAttribute, detect_positive: OnnxAttribute):
+        attributes = {
+            'detect_negative': detect_negative,
+            'detect_positive': detect_positive,
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class RoiAlign(Operation):
+    """
+Region of Interest (RoI) align operation described in the
+[Mask R-CNN paper](https://arxiv.org/abs/1703.06870).
+RoiAlign consumes an input tensor X and region of interests (rois)
+to apply pooling across each RoI; it produces a 4-D tensor of shape
+(num_rois, C, output_height, output_width).
+
+RoiAlign is proposed to avoid the misalignment by removing
+quantizations while converting from original image into feature
+map and from feature map into RoI feature; in each ROI bin,
+the value of the sampled locations are computed directly
+through bilinear interpolation.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(RoiAlign, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.mode = self.attributes.get('mode')
+        self.output_height = self.attributes.get('output_height')
+        self.output_width = self.attributes.get('output_width')
+        self.sampling_ratio = self.attributes.get('sampling_ratio')
+        self.spatial_scale = self.attributes.get('spatial_scale')
+        # Input data tensor from the previous operator; 4-D feature map of shape (N, C, H, W), where N is the batch size, C is the number of channels, and H and W are the height and the width of the data.
+        self.i_X = self.input[0]
+        # RoIs (Regions of Interest) to pool over; rois is 2-D input of shape (num_rois, 4) given as [[x1, y1, x2, y2], ...]. The RoIs' coordinates are in the coordinate system of the input image. Each coordinate set has a 1:1 correspondence with the 'batch_indices' input.
+        self.i_rois = self.input[1]
+        # 1-D tensor of shape (num_rois,) with each element denoting the index of the corresponding image in the batch.
+        self.i_batch_indices = self.input[2]
+        # RoI pooled output, 4-D tensor of shape (num_rois, C, output_height, output_width). The r-th batch element Y[r-1] is a pooled feature map corresponding to the r-th RoI X[r-1].
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(RoiAlign, self).accept(visitor, network)
+        visitor.visit_roialign(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, i_rois: str, i_batch_indices: str, o_Y: str, mode: OnnxAttribute, output_height: OnnxAttribute, output_width: OnnxAttribute, sampling_ratio: OnnxAttribute, spatial_scale: OnnxAttribute):
+        attributes = {
+            'mode': mode,
+            'output_height': output_height,
+            'output_width': output_width,
+            'sampling_ratio': sampling_ratio,
+            'spatial_scale': spatial_scale,
+        }
+        return cls([i_X, i_rois, i_batch_indices], [o_Y], None, None, None, attributes, None)
+
+
+class SequenceLength(Operation):
+    """
+Produces a scalar(tensor of empty shape) containing the number of tensors in 'input_sequence'.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(SequenceLength, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input sequence.
+        self.i_input_sequence = self.input[0]
+        # Length of input sequence. It must be a scalar(tensor of empty shape).
+        self.o_length = self.output[0]
+
+    def accept(self, visitor, network):
+        super(SequenceLength, self).accept(visitor, network)
+        visitor.visit_sequencelength(self, network)
+
+    @classmethod
+    def create_op(cls, i_input_sequence: str, o_length: str):
+        attributes = {
+        }
+        return cls([i_input_sequence], [o_length], None, None, None, attributes, None)
+
+
+class BitShift(Operation):
+    """
+Bitwise shift operator performs element-wise operation. For each input element, if the
+ attribute "direction" is "RIGHT", this operator moves its binary representation toward
+ the right side so that the input value is effectively decreased. If the attribute "direction"
+ is "LEFT", bits of binary representation moves toward the left side, which results the
+ increase of its actual value. The input X is the tensor to be shifted and another input
+ Y specifies the amounts of shifting. For example, if "direction" is "Right", X is [1, 4],
+ and S is [1, 1], the corresponding output Z would be [0, 2]. If "direction" is "LEFT" with
+ X=[1, 2] and S=[1, 2], the corresponding output Y would be [2, 8].
+ 
+ Because this operator supports Numpy-style broadcasting, X's and Y's shapes are
+ not necessarily identical.
+This operator supports **multidirectional (i.e., Numpy-style) broadcasting**; for more details please check [the doc](Broadcasting.md).    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(BitShift, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.direction = self.attributes.get('direction')
+        # First operand, input to be shifted.
+        self.i_X = self.input[0]
+        # Second operand, amounts of shift.
+        self.i_Y = self.input[1]
+        # Output tensor
+        self.o_Z = self.output[0]
+
+    def accept(self, visitor, network):
+        super(BitShift, self).accept(visitor, network)
+        visitor.visit_bitshift(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, i_Y: str, o_Z: str, direction: OnnxAttribute):
+        attributes = {
+            'direction': direction,
+        }
+        return cls([i_X, i_Y], [o_Z], None, None, None, attributes, None)
+
+
+class Unique(Operation):
+    """
+Find the unique elements of a tensor. When an optional attribute 'axis' is provided, unique subtensors sliced along the 'axis' are returned. 
+Otherwise the input tensor is flattened and unique values of the flattened tensor are returned. 
+
+This operator returns the unique values or sliced unique subtensors of the input tensor and three optional outputs. 
+The first output tensor 'Y' contains all unique values or subtensors of the input. 
+The second optional output tensor 'indices' contains indices of 'Y' elements' first occurance in 'X'.. 
+The third optional output tensor 'inverse_indices' contains, for elements of 'X', its corresponding indices in 'Y'. ". 
+The fourth optional output tensor 'counts' contains the count of each element of 'Y' in the input. 
+
+Outputs are either sorted in ascending order or optionally in the order of the first occurrence of the values in the input. 
+
+https://docs.scipy.org/doc/numpy/reference/generated/numpy.unique.html
+
+Example 1:
+  input_X = [2, 1, 1, 3, 4, 3]
+  attribute_sorted = 0
+  attribute_axis = None
+  output_Y = [2, 1, 3, 4]
+  output_indices = [0, 1, 3, 4]
+  output_inverse_indices = [0, 1, 1, 2, 3, 2]
+  output_counts = [1, 2, 2, 1]
+
+Example 2:
+  input_X = [[1, 3], [2, 3]]
+  attribute_sorted = 1
+  attribute_axis = None
+  output_Y = [1, 2, 3]
+  output_indices = [0, 2, 1]
+  output_inverse_indices = [0, 2, 1, 2]
+  output_counts = [1, 1, 2]
+
+Example 3:
+  input_X = [[1, 0, 0], [1, 0, 0], [2, 3, 4]]
+  attribute_sorted = 1
+  attribute_axis = 0
+  output_Y = [[1, 0, 0], [2, 3, 4]]
+  output_indices = [0, 2]
+  output_inverse_indices = [0, 0, 1]
+  output_counts = [2, 1]
+
+Example 4:
+  input_x = [[[1., 1.], [0., 1.], [2., 1.], [0., 1.]], 
+             [[1., 1.], [0., 1.], [2., 1.], [0., 1.]]]
+  attribute_sorted = 1
+  attribute_axis = 1
+
+  intermediate data are presented below for better understanding: 
+  
+  there are 4 subtensors sliced along axis 1 of input_x (shape = (2, 4, 2)):
+  A: [[1, 1], [1, 1]], 
+     [[0, 1], [0, 1]], 
+     [[2, 1], [2, 1]], 
+     [[0, 1], [0, 1]].
+  
+  there are 3 unique subtensors: 
+  [[1, 1], [1, 1]], 
+  [[0, 1], [0, 1]], 
+  [[2, 1], [2, 1]].
+  
+  sorted unique subtensors:
+  B: [[0, 1], [0, 1]], 
+     [[1, 1], [1, 1]], 
+     [[2, 1], [2, 1]].
+  
+  output_Y is constructed from B:
+  [[[0. 1.], [1. 1.], [2. 1.]], 
+   [[0. 1.], [1. 1.], [2. 1.]]]
+
+  output_indices is to map from B to A:
+  [1, 0, 2]
+  
+  output_inverse_indices is to map from A to B:
+  [1, 0, 2, 0]
+
+  output_counts = [2 1 1]
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Unique, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axis = self.attributes.get('axis')
+        self.sorted = self.attributes.get('sorted')
+        # A N-D input tensor that is to be processed.
+        self.i_X = self.input[0]
+        # A tensor of the same type as 'X' containing all the unique values or subtensors sliced along a provided 'axis' in 'X', either sorted or maintained in the same order they occur in input 'X'
+        self.o_Y = self.output[0]
+        # A 1-D INT64 tensor containing indices of 'Y' elements' first occurance in 'X'. When 'axis' is provided, it contains indices to subtensors in input 'X' on the 'axis'. When 'axis' is not provided, it contains indices to values in the flattened input tensor. 
+        # OPTIONAL
+        self.o_indices = None if len(self.output) < 2 else self.output[1]
+        # A 1-D INT64 tensor containing, for elements of 'X', its corresponding indices in 'Y'. When 'axis' is provided, it contains indices to subtensors in output 'Y' on the 'axis'. When 'axis' is not provided, it contains indices to values in output 'Y'. 
+        # OPTIONAL
+        self.o_inverse_indices = None if len(self.output) < 3 else self.output[2]
+        # A 1-D INT64 tensor containing the count of each element of 'Y' in input 'X'
+        # OPTIONAL
+        self.o_counts = None if len(self.output) < 4 else self.output[3]
+
+    def accept(self, visitor, network):
+        super(Unique, self).accept(visitor, network)
+        visitor.visit_unique(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, o_indices: str, o_inverse_indices: str, o_counts: str, axis: OnnxAttribute, sorted: OnnxAttribute):
+        attributes = {
+            'axis': axis,
+            'sorted': sorted,
+        }
+        return cls([i_X], [o_Y, o_indices, o_inverse_indices, o_counts], None, None, None, attributes, None)
+
+
+class CumSum(Operation):
+    """
+Performs cumulative sum of the input elements along the given axis.
+By default, it will do the sum inclusively meaning the first element is copied as is.
+Through an `exclusive` attribute, this behavior can change to exclude the first element.
+It can also perform summation in the opposite direction of the axis. For that, set `reverse` attribute to 1.
+
+Example:
+```
+input_x = [1, 2, 3]
+axis=0
+output = [1, 3, 6]
+exclusive=1
+output = [0, 1, 3]
+exclusive=0
+reverse=1
+output = [6, 5, 3]
+exclusive=1
+reverse=1
+output = [5, 3, 0]
+```
+     """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(CumSum, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.exclusive = self.attributes.get('exclusive')
+        self.reverse = self.attributes.get('reverse')
+        # An input tensor that is to be processed.
+        self.i_x = self.input[0]
+        # (Optional) A 0-D tensor. Must be in the range [-rank(x), rank(x)-1]. Negative value means counting dimensions from the back.
+        self.i_axis = self.input[1]
+        # Output tensor of the same type as 'x' with cumulative sums of the x's elements
+        self.o_y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(CumSum, self).accept(visitor, network)
+        visitor.visit_cumsum(self, network)
+
+    @classmethod
+    def create_op(cls, i_x: str, i_axis: str, o_y: str, exclusive: OnnxAttribute, reverse: OnnxAttribute):
+        attributes = {
+            'exclusive': exclusive,
+            'reverse': reverse,
+        }
+        return cls([i_x, i_axis], [o_y], None, None, None, attributes, None)
+
+
+class Round(Operation):
+    """
+Round takes one input Tensor and rounds the values, element-wise, meaning
+it finds the nearest integer for each value.
+In case of halfs, the rule is to round them to the nearest even integer.
+The output tensor has the same shape and type as the input.
+
+Examples:
+```
+round([0.9]) = [1.0]
+round([2.5]) = [2.0]
+round([2.3]) = [2.0]
+round([1.5]) = [2.0]
+round([-4.5]) = [-4.0]
+```
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Round, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
         # Input tensor
         self.i_X = self.input[0]
         # Output tensor
         self.o_Y = self.output[0]
 
     def accept(self, visitor, network):
-        super(Reciprocal, self).accept(visitor, network)
-        visitor.visit_reciprocal(self, network)
+        super(Round, self).accept(visitor, network)
+        visitor.visit_round(self, network)
 
     @classmethod
     def create_op(cls, i_X: str, o_Y: str):
@@ -3866,120 +5788,1041 @@ the tensor elementwise.
         return cls([i_X], [o_Y], None, None, None, attributes, None)
 
 
+class DynamicQuantizeLinear(Operation):
+    """
+A Function to fuse calculation for Scale, Zero Point and FP32->8Bit convertion of FP32 Input data.
+Outputs Scale, ZeroPoint and Quantized Input for a given FP32 Input.
+Scale is calculated as:
+```
+ y_scale = (max(x) - min(x))/(qmax - qmin)
+ * where qmax and qmin are max and min values for quantization range .i.e [0, 255] in case of uint8
+ * data range is adjusted to include 0.
+```
+Zero point is calculated as:
+```
+intermediate_zero_point = (qmin - min(x))/(qmax - qmin)
+y_zero_point = cast(round(saturate(itermediate_zero_point)))
+* where qmax and qmin are max and min values for quantization range .i.e [0, 255] in case of uint8
+* for saturation, it saturates to [0, 255] if it's uint8, or [-127, 127] if it's int8. Right now only uint8 is supported.
+* rounding to nearest ties to even.
+```
+Data quantization formula is:
+```
+y = saturate (round (x / y_scale) + y_zero_point)
+* for saturation, it saturates to [0, 255] if it's uint8, or [-127, 127] if it's int8. Right now only uint8 is supported.
+* rounding to nearest ties to even.
+```
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(DynamicQuantizeLinear, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_x = self.input[0]
+        # Quantized output tensor
+        self.o_y = self.output[0]
+        # Output scale. It's a scalar, which means a per-tensor/layer quantization.
+        self.o_y_scale = self.output[1]
+        # Output zero point. It's a scalar, which means a per-tensor/layer quantization.
+        self.o_y_zero_point = self.output[2]
+
+    def accept(self, visitor, network):
+        super(DynamicQuantizeLinear, self).accept(visitor, network)
+        visitor.visit_dynamicquantizelinear(self, network)
+
+    @classmethod
+    def create_op(cls, i_x: str, o_y: str, o_y_scale: str, o_y_zero_point: str):
+        attributes = {
+        }
+        return cls([i_x], [o_y, o_y_scale, o_y_zero_point], None, None, None, attributes, None)
+
+
+class Range(Operation):
+    """
+Generate a tensor containing a sequence of numbers that begin at `start` and extends by increments of `delta` 
+up to `limit` (exclusive).
+
+The number of elements in the output of range is computed as below-
+
+`number_of_elements = max( ceil( (limit - start) / delta ) , 0 )`
+
+The pseudocode determining the contents of the output is shown below-
+
+`for(int i=0; i<number_of_elements; ++i)`
+
+`{`
+   
+`    output[i] =  start + (i * delta);  ` 
+
+`}`	
+
+`Example 1`
+Inputs: start = 3, limit = 9, delta = 3
+Output: [3, 6]
+
+`Example 2`
+Inputs: start = 10, limit = 4, delta = -2
+Output: [10, 8, 6]
+
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Range, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Scalar. First entry for the range of output values.
+        self.i_start = self.input[0]
+        # Scalar. Exclusive upper limit for the range of output values.
+        self.i_limit = self.input[1]
+        # Scalar. Value to step by.
+        self.i_delta = self.input[2]
+        # A 1-D tensor with same type as the inputs containing generated range of values.
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Range, self).accept(visitor, network)
+        visitor.visit_range(self, network)
+
+    @classmethod
+    def create_op(cls, i_start: str, i_limit: str, i_delta: str, o_output: str):
+        attributes = {
+        }
+        return cls([i_start, i_limit, i_delta], [o_output], None, None, None, attributes, None)
+
+
+class Det(Operation):
+    """
+Det calculates determinant of a square matrix or batches of square matrices.
+Det takes one input tensor of shape `[*, M, M]`, where `*` is zero or more batch dimensions,
+and the inner-most 2 dimensions form square matrices.
+The output is a tensor of shape `[*]`, containing the determinants of all input submatrices.
+e.g., When the input is 2-D, the output is a scalar(shape is empty: `[]`).
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Det, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input tensor
+        self.i_X = self.input[0]
+        # Output tensor
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Det, self).accept(visitor, network)
+        visitor.visit_det(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str):
+        attributes = {
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class ScatterND(Operation):
+    """
+ScatterND takes three inputs `data` tensor of rank r >= 1, `indices` tensor of rank q >= 1,
+and `updates` tensor of rank q + r - indices.shape[-1] - 1. The output of the operation
+is produced by creating a copy of the input `data`, and then updating its value to values
+specified by `updates` at specific index positions specified by `indices`. Its output shape
+is the same as the shape of `data`. Note that `indices` should not have duplicate entries.
+That is, two or more `updates` for the same index-location is not supported.
+
+`indices` is an integer tensor. Let k denote indices.shape[-1], the last dimension in the shape of `indices`.
+ `indices` is treated as a (q-1)-dimensional tensor of k-tuples, where each k-tuple is a partial-index into `data`.
+Hence, k can be a value at most the rank of `data`. When k equals rank(data), each update entry specifies an
+update to a single element of the tensor. When k is less than rank(data) each update entry specifies an
+update to a slice of the tensor.
+
+`updates` is treated as a (q-1)-dimensional tensor of replacement-slice-values. Thus, the
+first (q-1) dimensions of updates.shape must match the first (q-1) dimensions of indices.shape.
+The remaining dimensions of `updates` correspond to the dimensions of the
+replacement-slice-values. Each replacement-slice-value is a (r-k) dimensional tensor,
+corresponding to the trailing (r-k) dimensions of `data`.  Thus, the shape of `updates`
+must equal indices.shape[0:q-1] ++ data.shape[k:r-1], where ++ denotes the concatenation
+of shapes.
+
+The `output` is calculated via the following equation:
+
+    output = np.copy(data)
+    update_indices = indices.shape[:-1]
+    for idx in np.ndindex(update_indices):
+        output[indices[idx]] = updates[idx]
+
+The order of iteration in the above loop is not specified.
+In particular, indices should not have duplicate entries: that is, if idx1 != idx2, then indices[idx1] != indices[idx2].
+This ensures that the output value does not depend on the iteration order.
+
+This operator is the inverse of GatherND.
+
+Example 1:
+```
+  data    = [1, 2, 3, 4, 5, 6, 7, 8]
+  indices = [[4], [3], [1], [7]]
+  updates = [9, 10, 11, 12]
+  output  = [1, 11, 3, 10, 9, 6, 7, 12]
+```
+
+Example 2:
+```
+  data    = [[[1, 2, 3, 4], [5, 6, 7, 8], [8, 7, 6, 5], [4, 3, 2, 1]],
+             [[1, 2, 3, 4], [5, 6, 7, 8], [8, 7, 6, 5], [4, 3, 2, 1]],
+             [[8, 7, 6, 5], [4, 3, 2, 1], [1, 2, 3, 4], [5, 6, 7, 8]],
+             [[8, 7, 6, 5], [4, 3, 2, 1], [1, 2, 3, 4], [5, 6, 7, 8]]]
+  indices = [[0], [2]]
+  updates = [[[5, 5, 5, 5], [6, 6, 6, 6], [7, 7, 7, 7], [8, 8, 8, 8]],
+             [[1, 1, 1, 1], [2, 2, 2, 2], [3, 3, 3, 3], [4, 4, 4, 4]]]
+  output  = [[[5, 5, 5, 5], [6, 6, 6, 6], [7, 7, 7, 7], [8, 8, 8, 8]],
+             [[1, 2, 3, 4], [5, 6, 7, 8], [8, 7, 6, 5], [4, 3, 2, 1]],
+             [[1, 1, 1, 1], [2, 2, 2, 2], [3, 3, 3, 3], [4, 4, 4, 4]],
+             [[8, 7, 6, 5], [4, 3, 2, 1], [1, 2, 3, 4], [5, 6, 7, 8]]]
+```
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(ScatterND, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Tensor of rank r >= 1.
+        self.i_data = self.input[0]
+        # Tensor of rank q >= 1.
+        self.i_indices = self.input[1]
+        # Tensor of rank q + r - indices_shape[-1] - 1.
+        self.i_updates = self.input[2]
+        # Tensor of rank r >= 1.
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(ScatterND, self).accept(visitor, network)
+        visitor.visit_scatternd(self, network)
+
+    @classmethod
+    def create_op(cls, i_data: str, i_indices: str, i_updates: str, o_output: str):
+        attributes = {
+        }
+        return cls([i_data, i_indices, i_updates], [o_output], None, None, None, attributes, None)
+
+
+class SequenceEmpty(Operation):
+    """
+Construct an empty tensor sequence, with given data type.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(SequenceEmpty, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.dtype = self.attributes.get('dtype')
+        # Empty sequence.
+        self.o_output = self.output[0]
+
+    def accept(self, visitor, network):
+        super(SequenceEmpty, self).accept(visitor, network)
+        visitor.visit_sequenceempty(self, network)
+
+    @classmethod
+    def create_op(cls, o_output: str, dtype: OnnxAttribute):
+        attributes = {
+            'dtype': dtype,
+        }
+        return cls([], [o_output], None, None, None, attributes, None)
+
+
+class SequenceConstruct(Operation):
+    """
+Construct a tensor sequence containing 'inputs' tensors.
+All tensors in 'inputs' must have the same data type.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(SequenceConstruct, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Tensors.
+        # input is variadic [1,infty) just use self.input to access whole list
+        # Sequence enclosing the input tensors.
+        self.o_output_sequence = self.output[0]
+
+    def accept(self, visitor, network):
+        super(SequenceConstruct, self).accept(visitor, network)
+        visitor.visit_sequenceconstruct(self, network)
+
+    @classmethod
+    def create_op(cls, i_inputs: str, o_output_sequence: str):
+        attributes = {
+        }
+        return cls([i_inputs], [o_output_sequence], None, None, None, attributes, None)
+
+
+class SequenceInsert(Operation):
+    """
+Outputs a tensor sequence that inserts 'tensor' into 'input_sequence' at 'position'.
+'tensor' must have the same data type as 'input_sequence'.
+Accepted range for 'position' is in `[-n, n]`, where `n` is the number of tensors in 'input_sequence'.
+Negative value means counting positions from the back.
+'position' is optional, by default it inserts 'tensor' to the back of 'input_sequence'.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(SequenceInsert, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input sequence.
+        self.i_input_sequence = self.input[0]
+        # Input tensor to be inserted into the input sequence.
+        self.i_tensor = self.input[1]
+        # Position in the sequence where the new tensor is inserted. It is optional and default is to insert to the back of the sequence. Negative value means counting positions from the back. Accepted range in `[-n, n]`, where `n` is the number of tensors in 'input_sequence'. It is an error if any of the index values are out of bounds. It must be a scalar(tensor of empty shape).
+        # OPTIONAL
+        self.i_position = None if len(self.input) < 3 else self.input[2]
+        # Output sequence that contains the inserted tensor at given position.
+        self.o_output_sequence = self.output[0]
+
+    def accept(self, visitor, network):
+        super(SequenceInsert, self).accept(visitor, network)
+        visitor.visit_sequenceinsert(self, network)
+
+    @classmethod
+    def create_op(cls, i_input_sequence: str, i_tensor: str, i_position: str, o_output_sequence: str):
+        attributes = {
+        }
+        return cls([i_input_sequence, i_tensor, i_position], [o_output_sequence], None, None, None, attributes, None)
+
+
+class SequenceAt(Operation):
+    """
+Outputs a tensor copy from the tensor at 'position' in 'input_sequence'.
+Accepted range for 'position' is in `[-n, n - 1]`, where `n` is the number of tensors in 'input_sequence'.
+Negative value means counting positions from the back.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(SequenceAt, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input sequence.
+        self.i_input_sequence = self.input[0]
+        # Position of the tensor in the sequence. Negative value means counting positions from the back. Accepted range in `[-n, n - 1]`, where `n` is the number of tensors in 'input_sequence'. It is an error if any of the index values are out of bounds. It must be a scalar(tensor of empty shape).
+        self.i_position = self.input[1]
+        # Output tensor at the specified position in the input sequence.
+        self.o_tensor = self.output[0]
+
+    def accept(self, visitor, network):
+        super(SequenceAt, self).accept(visitor, network)
+        visitor.visit_sequenceat(self, network)
+
+    @classmethod
+    def create_op(cls, i_input_sequence: str, i_position: str, o_tensor: str):
+        attributes = {
+        }
+        return cls([i_input_sequence, i_position], [o_tensor], None, None, None, attributes, None)
+
+
+class SequenceErase(Operation):
+    """
+Outputs a tensor sequence that removes the tensor at 'position' from 'input_sequence'.
+Accepted range for 'position' is in `[-n, n - 1]`, where `n` is the number of tensors in 'input_sequence'.
+Negative value means counting positions from the back.
+'position' is optional, by default it erases the last tensor from 'input_sequence'.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(SequenceErase, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Input sequence.
+        self.i_input_sequence = self.input[0]
+        # Position of the tensor in the sequence. Negative value means counting positions from the back. Accepted range in `[-n, n - 1]`, where `n` is the number of tensors in 'input_sequence'. It is an error if any of the index values are out of bounds. It must be a scalar(tensor of empty shape).
+        # OPTIONAL
+        self.i_position = None if len(self.input) < 2 else self.input[1]
+        # Output sequence that has the tensor at the specified position removed.
+        self.o_output_sequence = self.output[0]
+
+    def accept(self, visitor, network):
+        super(SequenceErase, self).accept(visitor, network)
+        visitor.visit_sequenceerase(self, network)
+
+    @classmethod
+    def create_op(cls, i_input_sequence: str, i_position: str, o_output_sequence: str):
+        attributes = {
+        }
+        return cls([i_input_sequence, i_position], [o_output_sequence], None, None, None, attributes, None)
+
+
+class SplitToSequence(Operation):
+    """Split a tensor into a sequence of tensors, along the specified
+'axis'. Lengths of the parts can be specified using argument 'split'.
+'split' must contain only positive numbers.
+'split' is either a scalar (tensor of empty shape), or a 1-D tensor.
+If 'split' is a scalar, then 'input' will be split into equally sized chunks(if possible).
+Last chunk will be smaller if the 'input' size along the given axis 'axis' is not divisible
+by 'split'.
+Otherwise, the tensor is split into 'size(split)' chunks, with lengths of the parts on 'axis'
+specified in 'split'. In this scenario, the sum of entries in 'split' must be equal to the
+dimension size of input tensor on 'axis'.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(SplitToSequence, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.axis = self.attributes.get('axis')
+        self.keepdims = self.attributes.get('keepdims')
+        # The tensor to split
+        self.i_input = self.input[0]
+        # Length of each output. It can be either a scalar(tensor of empty shape), or a 1-D tensor. All values must be positive. 
+        # OPTIONAL
+        self.i_split = None if len(self.input) < 2 else self.input[1]
+        # One or more outputs forming a sequence of tensors after splitting
+        self.o_output_sequence = self.output[0]
+
+    def accept(self, visitor, network):
+        super(SplitToSequence, self).accept(visitor, network)
+        visitor.visit_splittosequence(self, network)
+
+    @classmethod
+    def create_op(cls, i_input: str, i_split: str, o_output_sequence: str, axis: OnnxAttribute, keepdims: OnnxAttribute):
+        attributes = {
+            'axis': axis,
+            'keepdims': keepdims,
+        }
+        return cls([i_input, i_split], [o_output_sequence], None, None, None, attributes, None)
+
+
+class ArrayFeatureExtractor(Operation):
+    """
+    Select elements of the input tensor based on the indices passed.<br>
+    The indices are applied to the last axes of the tensor.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(ArrayFeatureExtractor, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        # Data to be selected
+        self.i_X = self.input[0]
+        # The indices, based on 0 as the first index of any dimension.
+        self.i_Y = self.input[1]
+        # Selected output data as an array
+        self.o_Z = self.output[0]
+
+    def accept(self, visitor, network):
+        super(ArrayFeatureExtractor, self).accept(visitor, network)
+        visitor.visit_arrayfeatureextractor(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, i_Y: str, o_Z: str):
+        attributes = {
+        }
+        return cls([i_X, i_Y], [o_Z], None, None, None, attributes, None)
+
+
+class Binarizer(Operation):
+    """
+    Maps the values of the input tensor to either 0 or 1, element-wise, based on the outcome of a comparison against a threshold value.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Binarizer, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.threshold = self.attributes.get('threshold')
+        # Data to be binarized
+        self.i_X = self.input[0]
+        # Binarized output data
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Binarizer, self).accept(visitor, network)
+        visitor.visit_binarizer(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, threshold: OnnxAttribute):
+        attributes = {
+            'threshold': threshold,
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class CategoryMapper(Operation):
+    """
+    Converts strings to integers and vice versa.<br>
+    Two sequences of equal length are used to map between integers and strings,
+    with strings and integers at the same index detailing the mapping.<br>
+    Each operator converts either integers to strings or strings to integers, depending 
+    on which default value attribute is provided. Only one default value attribute
+    should be defined.<br>
+    If the string default value is set, it will convert integers to strings.
+    If the int default value is set, it will convert strings to integers.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(CategoryMapper, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.cats_int64s = self.attributes.get('cats_int64s')
+        self.cats_strings = self.attributes.get('cats_strings')
+        self.default_int64 = self.attributes.get('default_int64')
+        self.default_string = self.attributes.get('default_string')
+        # Input data
+        self.i_X = self.input[0]
+        # Output data. If strings are input, the output values are integers, and vice versa.
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(CategoryMapper, self).accept(visitor, network)
+        visitor.visit_categorymapper(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, cats_int64s: OnnxAttribute, cats_strings: OnnxAttribute, default_int64: OnnxAttribute, default_string: OnnxAttribute):
+        attributes = {
+            'cats_int64s': cats_int64s,
+            'cats_strings': cats_strings,
+            'default_int64': default_int64,
+            'default_string': default_string,
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class DictVectorizer(Operation):
+    """
+    Uses an index mapping to convert a dictionary to an array.<br>
+    Given a dictionary, each key is looked up in the vocabulary attribute corresponding to
+    the key type. The index into the vocabulary array at which the key is found is then
+    used to index the output 1-D tensor 'Y' and insert into it the value found in the dictionary 'X'.<br>
+    The key type of the input map must correspond to the element type of the defined vocabulary attribute.
+    Therefore, the output array will be equal in length to the index mapping vector parameter.
+    All keys in the input dictionary must be present in the index mapping vector.
+    For each item in the input dictionary, insert its value in the output array.
+    Any keys not present in the input dictionary, will be zero in the output array.<br>
+    For example: if the ``string_vocabulary`` parameter is set to ``["a", "c", "b", "z"]``,
+    then an input of ``{"a": 4, "c": 8}`` will produce an output of ``[4, 8, 0, 0]``.
+        """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(DictVectorizer, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.int64_vocabulary = self.attributes.get('int64_vocabulary')
+        self.string_vocabulary = self.attributes.get('string_vocabulary')
+        # A dictionary.
+        self.i_X = self.input[0]
+        # A 1-D tensor holding values from the input dictionary.
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(DictVectorizer, self).accept(visitor, network)
+        visitor.visit_dictvectorizer(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, int64_vocabulary: OnnxAttribute, string_vocabulary: OnnxAttribute):
+        attributes = {
+            'int64_vocabulary': int64_vocabulary,
+            'string_vocabulary': string_vocabulary,
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class FeatureVectorizer(Operation):
+    """
+    Concatenates input tensors into one continuous output.<br>
+    All input shapes are 2-D and are concatenated along the second dimention. 1-D tensors are treated as [1,C].
+    Inputs are copied to the output maintaining the order of the input arguments.<br>
+    All inputs must be integers or floats, while the output will be all floating point values.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(FeatureVectorizer, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.inputdimensions = self.attributes.get('inputdimensions')
+        # An ordered collection of tensors, all with the same element type.
+        # input is variadic [1,infty) just use self.input to access whole list
+        # The output array, elements ordered as the inputs.
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(FeatureVectorizer, self).accept(visitor, network)
+        visitor.visit_featurevectorizer(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, inputdimensions: OnnxAttribute):
+        attributes = {
+            'inputdimensions': inputdimensions,
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class LabelEncoder(Operation):
+    """
+    Maps each element in the input tensor to another value.<br>
+    The mapping is determined by the two parallel attributes, 'keys_*' and
+    'values_*' attribute. The i-th value in the specified 'keys_*' attribute
+    would be mapped to the i-th value in the specified 'values_*' attribute. It
+    implies that input's element type and the element type of the specified
+    'keys_*' should be identical while the output type is identical to the
+    specified 'values_*' attribute. If an input element can not be found in the
+    specified 'keys_*' attribute, the 'default_*' that matches the specified
+    'values_*' attribute may be used as its output value.<br>
+    Let's consider an example which maps a string tensor to an integer tensor.
+    Assume and 'keys_strings' is ["Amy", "Sally"], 'values_int64s' is [5, 6],
+    and 'default_int64' is '-1'.  The input ["Dori", "Amy", "Amy", "Sally",
+    "Sally"] would be mapped to [-1, 5, 5, 6, 6].<br>
+    Since this operator is an one-to-one mapping, its input and output shapes
+    are the same. Notice that only one of 'keys_*'/'values_*' can be set.<br>
+    For key look-up, bit-wise comparison is used so even a float NaN can be
+    mapped to a value in 'values_*' attribute.<br>
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(LabelEncoder, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.default_float = self.attributes.get('default_float')
+        self.default_int64 = self.attributes.get('default_int64')
+        self.default_string = self.attributes.get('default_string')
+        self.keys_floats = self.attributes.get('keys_floats')
+        self.keys_int64s = self.attributes.get('keys_int64s')
+        self.keys_strings = self.attributes.get('keys_strings')
+        self.values_floats = self.attributes.get('values_floats')
+        self.values_int64s = self.attributes.get('values_int64s')
+        self.values_strings = self.attributes.get('values_strings')
+        # Input data. It can be either tensor or scalar.
+        self.i_X = self.input[0]
+        # Output data.
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(LabelEncoder, self).accept(visitor, network)
+        visitor.visit_labelencoder(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, default_float: OnnxAttribute, default_int64: OnnxAttribute, default_string: OnnxAttribute, keys_floats: OnnxAttribute, keys_int64s: OnnxAttribute, keys_strings: OnnxAttribute, values_floats: OnnxAttribute, values_int64s: OnnxAttribute, values_strings: OnnxAttribute):
+        attributes = {
+            'default_float': default_float,
+            'default_int64': default_int64,
+            'default_string': default_string,
+            'keys_floats': keys_floats,
+            'keys_int64s': keys_int64s,
+            'keys_strings': keys_strings,
+            'values_floats': values_floats,
+            'values_int64s': values_int64s,
+            'values_strings': values_strings,
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class LinearClassifier(Operation):
+    """
+    Linear classifier
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(LinearClassifier, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.classlabels_ints = self.attributes.get('classlabels_ints')
+        self.classlabels_strings = self.attributes.get('classlabels_strings')
+        self.coefficients = self.attributes.get('coefficients')
+        self.intercepts = self.attributes.get('intercepts')
+        self.multi_class = self.attributes.get('multi_class')
+        self.post_transform = self.attributes.get('post_transform')
+        # Data to be classified.
+        self.i_X = self.input[0]
+        # Classification outputs (one class per example).
+        self.o_Y = self.output[0]
+        # Classification scores ([N,E] - one score for each class and example
+        self.o_Z = self.output[1]
+
+    def accept(self, visitor, network):
+        super(LinearClassifier, self).accept(visitor, network)
+        visitor.visit_linearclassifier(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, o_Z: str, classlabels_ints: OnnxAttribute, classlabels_strings: OnnxAttribute, coefficients: OnnxAttribute, intercepts: OnnxAttribute, multi_class: OnnxAttribute, post_transform: OnnxAttribute):
+        attributes = {
+            'classlabels_ints': classlabels_ints,
+            'classlabels_strings': classlabels_strings,
+            'coefficients': coefficients,
+            'intercepts': intercepts,
+            'multi_class': multi_class,
+            'post_transform': post_transform,
+        }
+        return cls([i_X], [o_Y, o_Z], None, None, None, attributes, None)
+
+
+class LinearRegressor(Operation):
+    """
+    Generalized linear regression evaluation.<br>
+    If targets is set to 1 (default) then univariate regression is performed.<br>
+    If targets is set to M then M sets of coefficients must be passed in as a sequence
+    and M results will be output for each input n in N.<br>
+    The coefficients array is of length n, and the coefficients for each target are contiguous.
+    Intercepts are optional but if provided must match the number of targets.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(LinearRegressor, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.coefficients = self.attributes.get('coefficients')
+        self.intercepts = self.attributes.get('intercepts')
+        self.post_transform = self.attributes.get('post_transform')
+        self.targets = self.attributes.get('targets')
+        # Data to be regressed.
+        self.i_X = self.input[0]
+        # Regression outputs (one per target, per example).
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(LinearRegressor, self).accept(visitor, network)
+        visitor.visit_linearregressor(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, coefficients: OnnxAttribute, intercepts: OnnxAttribute, post_transform: OnnxAttribute, targets: OnnxAttribute):
+        attributes = {
+            'coefficients': coefficients,
+            'intercepts': intercepts,
+            'post_transform': post_transform,
+            'targets': targets,
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class Normalizer(Operation):
+    """
+    Normalize the input.  There are three normalization modes, which have the corresponding formulas,
+    defined using element-wise infix operators '/' and '^' and tensor-wide functions 'max' and 'sum':<br>
+<br>
+    Max: Y = X / max(X)<br>
+    L1:  Y = X / sum(X)<br>
+    L2:  Y = sqrt(X^2 / sum(X^2)}<br>
+    In all modes, if the divisor is zero, Y == X.
+<br>
+    For batches, that is, [N,C] tensors, normalization is done along the C axis. In other words, each row
+    of the batch is normalized independently.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Normalizer, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.norm = self.attributes.get('norm')
+        # Data to be encoded, a tensor of shape [N,C] or [C]
+        self.i_X = self.input[0]
+        # Encoded output data
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Normalizer, self).accept(visitor, network)
+        visitor.visit_normalizer(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, norm: OnnxAttribute):
+        attributes = {
+            'norm': norm,
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class SVMRegressor(Operation):
+    """
+    Support Vector Machine regression prediction and one-class SVM anomaly detection.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(SVMRegressor, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.coefficients = self.attributes.get('coefficients')
+        self.kernel_params = self.attributes.get('kernel_params')
+        self.kernel_type = self.attributes.get('kernel_type')
+        self.n_supports = self.attributes.get('n_supports')
+        self.one_class = self.attributes.get('one_class')
+        self.post_transform = self.attributes.get('post_transform')
+        self.rho = self.attributes.get('rho')
+        self.support_vectors = self.attributes.get('support_vectors')
+        # Data to be regressed.
+        self.i_X = self.input[0]
+        # Regression outputs (one score per target per example).
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(SVMRegressor, self).accept(visitor, network)
+        visitor.visit_svmregressor(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, coefficients: OnnxAttribute, kernel_params: OnnxAttribute, kernel_type: OnnxAttribute, n_supports: OnnxAttribute, one_class: OnnxAttribute, post_transform: OnnxAttribute, rho: OnnxAttribute, support_vectors: OnnxAttribute):
+        attributes = {
+            'coefficients': coefficients,
+            'kernel_params': kernel_params,
+            'kernel_type': kernel_type,
+            'n_supports': n_supports,
+            'one_class': one_class,
+            'post_transform': post_transform,
+            'rho': rho,
+            'support_vectors': support_vectors,
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class Scaler(Operation):
+    """
+    Rescale input data, for example to standardize features by removing the mean and scaling to unit variance.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(Scaler, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.offset = self.attributes.get('offset')
+        self.scale = self.attributes.get('scale')
+        # Data to be scaled.
+        self.i_X = self.input[0]
+        # Scaled output data.
+        self.o_Y = self.output[0]
+
+    def accept(self, visitor, network):
+        super(Scaler, self).accept(visitor, network)
+        visitor.visit_scaler(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, offset: OnnxAttribute, scale: OnnxAttribute):
+        attributes = {
+            'offset': offset,
+            'scale': scale,
+        }
+        return cls([i_X], [o_Y], None, None, None, attributes, None)
+
+
+class TreeEnsembleClassifier(Operation):
+    """
+    Tree Ensemble classifier.  Returns the top class for each of N inputs.<br>
+    The attributes named 'nodes_X' form a sequence of tuples, associated by 
+    index into the sequences, which must all be of equal length. These tuples
+    define the nodes.<br>
+    Similarly, all fields prefixed with 'class_' are tuples of votes at the leaves.
+    A leaf may have multiple votes, where each vote is weighted by
+    the associated class_weights index.<br>
+    One and only one of classlabels_strings or classlabels_int64s
+    will be defined. The class_ids are indices into this list.
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(TreeEnsembleClassifier, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.base_values = self.attributes.get('base_values')
+        self.class_ids = self.attributes.get('class_ids')
+        self.class_nodeids = self.attributes.get('class_nodeids')
+        self.class_treeids = self.attributes.get('class_treeids')
+        self.class_weights = self.attributes.get('class_weights')
+        self.classlabels_int64s = self.attributes.get('classlabels_int64s')
+        self.classlabels_strings = self.attributes.get('classlabels_strings')
+        self.nodes_falsenodeids = self.attributes.get('nodes_falsenodeids')
+        self.nodes_featureids = self.attributes.get('nodes_featureids')
+        self.nodes_hitrates = self.attributes.get('nodes_hitrates')
+        self.nodes_missing_value_tracks_true = self.attributes.get('nodes_missing_value_tracks_true')
+        self.nodes_modes = self.attributes.get('nodes_modes')
+        self.nodes_nodeids = self.attributes.get('nodes_nodeids')
+        self.nodes_treeids = self.attributes.get('nodes_treeids')
+        self.nodes_truenodeids = self.attributes.get('nodes_truenodeids')
+        self.nodes_values = self.attributes.get('nodes_values')
+        self.post_transform = self.attributes.get('post_transform')
+        # Input of shape [N,F]
+        self.i_X = self.input[0]
+        # N, Top class for each point
+        self.o_Y = self.output[0]
+        # The class score for each class, for each point, a tensor of shape [N,E].
+        self.o_Z = self.output[1]
+
+    def accept(self, visitor, network):
+        super(TreeEnsembleClassifier, self).accept(visitor, network)
+        visitor.visit_treeensembleclassifier(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Y: str, o_Z: str, base_values: OnnxAttribute, class_ids: OnnxAttribute, class_nodeids: OnnxAttribute, class_treeids: OnnxAttribute, class_weights: OnnxAttribute, classlabels_int64s: OnnxAttribute, classlabels_strings: OnnxAttribute, nodes_falsenodeids: OnnxAttribute, nodes_featureids: OnnxAttribute, nodes_hitrates: OnnxAttribute, nodes_missing_value_tracks_true: OnnxAttribute, nodes_modes: OnnxAttribute, nodes_nodeids: OnnxAttribute, nodes_treeids: OnnxAttribute, nodes_truenodeids: OnnxAttribute, nodes_values: OnnxAttribute, post_transform: OnnxAttribute):
+        attributes = {
+            'base_values': base_values,
+            'class_ids': class_ids,
+            'class_nodeids': class_nodeids,
+            'class_treeids': class_treeids,
+            'class_weights': class_weights,
+            'classlabels_int64s': classlabels_int64s,
+            'classlabels_strings': classlabels_strings,
+            'nodes_falsenodeids': nodes_falsenodeids,
+            'nodes_featureids': nodes_featureids,
+            'nodes_hitrates': nodes_hitrates,
+            'nodes_missing_value_tracks_true': nodes_missing_value_tracks_true,
+            'nodes_modes': nodes_modes,
+            'nodes_nodeids': nodes_nodeids,
+            'nodes_treeids': nodes_treeids,
+            'nodes_truenodeids': nodes_truenodeids,
+            'nodes_values': nodes_values,
+            'post_transform': post_transform,
+        }
+        return cls([i_X], [o_Y, o_Z], None, None, None, attributes, None)
+
+
+class ZipMap(Operation):
+    """
+    Creates a map from the input and the attributes.<br>
+    The values are provided by the input tensor, while the keys are specified by the attributes.
+    Must provide keys in either classlabels_strings or classlabels_int64s (but not both).<br>
+    The columns of the tensor correspond one-by-one to the keys specified by the attributes. There must be as many columns as keys.<br>
+    """
+
+    def __init__(self, input, output, name, op_type, domain, attributes, doc_string):
+        super(ZipMap, self).__init__(input, output, name, op_type, domain, attributes, doc_string)
+        self.classlabels_int64s = self.attributes.get('classlabels_int64s')
+        self.classlabels_strings = self.attributes.get('classlabels_strings')
+        # The input values
+        self.i_X = self.input[0]
+        # The output map
+        self.o_Z = self.output[0]
+
+    def accept(self, visitor, network):
+        super(ZipMap, self).accept(visitor, network)
+        visitor.visit_zipmap(self, network)
+
+    @classmethod
+    def create_op(cls, i_X: str, o_Z: str, classlabels_int64s: OnnxAttribute, classlabels_strings: OnnxAttribute):
+        attributes = {
+            'classlabels_int64s': classlabels_int64s,
+            'classlabels_strings': classlabels_strings,
+        }
+        return cls([i_X], [o_Z], None, None, None, attributes, None)
+
+
 ONNX_OPERATIONS = {
-    'sin': Sin,
-    'atan': Atan,
-    'asin': Asin,
-    'acos': Acos,
-    'unsqueeze': Unsqueeze,
-    'topk': TopK,
-    'tile': Tile,
-    'thresholdedrelu': ThresholdedRelu,
-    'tanh': Tanh,
-    'sum': Sum,
-    'squeeze': Squeeze,
-    'spacetodepth': SpaceToDepth,
-    'softmax': Softmax,
-    'slice': Slice,
-    'size': Size,
-    'shape': Shape,
-    'selu': Selu,
-    'transpose': Transpose,
-    'scaledtanh': ScaledTanh,
-    'sigmoid': Sigmoid,
-    'scale': Scale,
-    'reducesumsquare': ReduceSumSquare,
-    'reducesum': ReduceSum,
-    'reshape': Reshape,
-    'reduceprod': ReduceProd,
-    'tan': Tan,
-    'globalaveragepool': GlobalAveragePool,
-    'reducel2': ReduceL2,
-    'meanvariancenormalization': MeanVarianceNormalization,
-    'gru': GRU,
-    'giventensorfill': GivenTensorFill,
-    'multinomial': Multinomial,
-    'flatten': Flatten,
-    'exp': Exp,
-    'equal': Equal,
-    'not': Not,
-    'sqrt': Sqrt,
-    'elu': Elu,
-    'reducemin': ReduceMin,
-    'div': Div,
-    'prelu': PRelu,
-    'depthtospace': DepthToSpace,
-    'gruunit': GRUUnit,
-    'convtranspose': ConvTranspose,
-    'logsoftmax': LogSoftmax,
-    'reducelogsum': ReduceLogSum,
-    'reducemean': ReduceMean,
-    'crop': Crop,
-    'and': And,
-    'reducemax': ReduceMax,
-    'argmax': ArgMax,
-    'lpnormalization': LpNormalization,
-    'loop': Loop,
-    'affine': Affine,
     'lstm': LSTM,
-    'softplus': Softplus,
-    'randomnormallike': RandomNormalLike,
-    'argmin': ArgMin,
-    'conv': Conv,
-    'add': Add,
-    'abs': Abs,
-    'split': Split,
-    'batchnormalization': BatchNormalization,
-    'upsample': Upsample,
-    'globallppool': GlobalLpPool,
-    'reducelogsumexp': ReduceLogSumExp,
-    'matmul': MatMul,
-    'sub': Sub,
-    'maxpool': MaxPool,
-    'neg': Neg,
-    'xor': Xor,
-    'greater': Greater,
-    'dropout': Dropout,
-    'cast': Cast,
-    'gather': Gather,
-    'ceil': Ceil,
-    'concat': Concat,
-    'softsign': Softsign,
-    'constantfill': ConstantFill,
-    'hardmax': Hardmax,
     'identity': Identity,
-    'if': If,
-    'imagescaler': ImageScaler,
-    'randomuniform': RandomUniform,
-    'cos': Cos,
-    'gemm': Gemm,
-    'instancenormalization': InstanceNormalization,
-    'relu': Relu,
+    'abs': Abs,
+    'batchnormalization': BatchNormalization,
+    'mean': Mean,
+    'add': Add,
+    'globalmaxpool': GlobalMaxPool,
+    'cast': Cast,
     'averagepool': AveragePool,
-    'less': Less,
-    'log': Log,
-    'loopindextensor': LoopIndexTensor,
-    'floor': Floor,
-    'min': Min,
+    'and': And,
+    'lrn': LRN,
+    'argmax': ArgMax,
+    'resize': Resize,
+    'expand': Expand,
+    'neg': Neg,
+    'mul': Mul,
+    'argmin': ArgMin,
+    'castmap': CastMap,
+    'exp': Exp,
+    'div': Div,
+    'reversesequence': ReverseSequence,
+    'ceil': Ceil,
+    'depthtospace': DepthToSpace,
+    'clip': Clip,
     'rnn': RNN,
+    'concat': Concat,
+    'constant': Constant,
     'lppool': LpPool,
+    'conv': Conv,
+    'not': Not,
+    'gather': Gather,
+    'convtranspose': ConvTranspose,
+    'dropout': Dropout,
+    'leakyrelu': LeakyRelu,
+    'elu': Elu,
+    'globalaveragepool': GlobalAveragePool,
+    'gatherelements': GatherElements,
+    'gemm': Gemm,
+    'maxpool': MaxPool,
+    'equal': Equal,
+    'tile': Tile,
+    'flatten': Flatten,
+    'floor': Floor,
+    'gru': GRU,
+    'scatterelements': ScatterElements,
+    'globallppool': GlobalLpPool,
+    'greater': Greater,
+    'hardsigmoid': HardSigmoid,
+    'selu': Selu,
+    'hardmax': Hardmax,
+    'if': If,
+    'min': Min,
+    'instancenormalization': InstanceNormalization,
+    'less': Less,
+    'eyelike': EyeLike,
+    'randomnormal': RandomNormal,
+    'slice': Slice,
+    'prelu': PRelu,
+    'log': Log,
+    'logsoftmax': LogSoftmax,
+    'loop': Loop,
+    'lpnormalization': LpNormalization,
+    'matmul': MatMul,
+    'reducel2': ReduceL2,
     'max': Max,
     'maxroipool': MaxRoiPool,
-    'lrn': LRN,
-    'mean': Mean,
-    'mul': Mul,
-    'globalmaxpool': GlobalMaxPool,
-    'pad': Pad,
     'or': Or,
-    'reducel1': ReduceL1,
-    'parametricsoftplus': ParametricSoftplus,
-    'pow': Pow,
-    'aten': ATen,
-    'constant': Constant,
-    'randomnormal': RandomNormal,
-    'hardsigmoid': HardSigmoid,
-    'clip': Clip,
+    'pad': Pad,
     'randomuniformlike': RandomUniformLike,
-    'leakyrelu': LeakyRelu,
     'reciprocal': Reciprocal,
+    'pow': Pow,
+    'randomnormallike': RandomNormalLike,
+    'onehot': OneHot,
+    'randomuniform': RandomUniform,
+    'concatfromsequence': ConcatFromSequence,
+    'reducel1': ReduceL1,
+    'reducelogsum': ReduceLogSum,
+    'reducelogsumexp': ReduceLogSumExp,
+    'reducemax': ReduceMax,
+    'onehotencoder': OneHotEncoder,
+    'isnan': IsNaN,
+    'reducemean': ReduceMean,
+    'reducemin': ReduceMin,
+    'treeensembleregressor': TreeEnsembleRegressor,
+    'reduceprod': ReduceProd,
+    'reducesum': ReduceSum,
+    'reducesumsquare': ReduceSumSquare,
+    'relu': Relu,
+    'reshape': Reshape,
+    'shape': Shape,
+    'sigmoid': Sigmoid,
+    'size': Size,
+    'softmax': Softmax,
+    'softplus': Softplus,
+    'softsign': Softsign,
+    'spacetodepth': SpaceToDepth,
+    'tfidfvectorizer': TfIdfVectorizer,
+    'split': Split,
+    'imputer': Imputer,
+    'sqrt': Sqrt,
+    'squeeze': Squeeze,
+    'topk': TopK,
+    'sub': Sub,
+    'sum': Sum,
+    'shrink': Shrink,
+    'tanh': Tanh,
+    'transpose': Transpose,
+    'unsqueeze': Unsqueeze,
+    'upsample': Upsample,
+    'svmclassifier': SVMClassifier,
+    'xor': Xor,
+    'acos': Acos,
+    'asin': Asin,
+    'atan': Atan,
+    'cos': Cos,
+    'sin': Sin,
+    'tan': Tan,
+    'multinomial': Multinomial,
+    'scan': Scan,
+    'compress': Compress,
+    'constantofshape': ConstantOfShape,
+    'maxunpool': MaxUnpool,
+    'scatter': Scatter,
+    'sinh': Sinh,
+    'cosh': Cosh,
+    'asinh': Asinh,
+    'acosh': Acosh,
+    'nonmaxsuppression': NonMaxSuppression,
+    'atanh': Atanh,
+    'sign': Sign,
+    'erf': Erf,
+    'where': Where,
+    'nonzero': NonZero,
+    'meanvariancenormalization': MeanVarianceNormalization,
+    'stringnormalizer': StringNormalizer,
+    'mod': Mod,
+    'thresholdedrelu': ThresholdedRelu,
+    'matmulinteger': MatMulInteger,
+    'qlinearmatmul': QLinearMatMul,
+    'convinteger': ConvInteger,
+    'qlinearconv': QLinearConv,
+    'quantizelinear': QuantizeLinear,
+    'gathernd': GatherND,
+    'dequantizelinear': DequantizeLinear,
+    'isinf': IsInf,
+    'roialign': RoiAlign,
+    'sequencelength': SequenceLength,
+    'bitshift': BitShift,
+    'unique': Unique,
+    'cumsum': CumSum,
+    'round': Round,
+    'dynamicquantizelinear': DynamicQuantizeLinear,
+    'range': Range,
+    'det': Det,
+    'scatternd': ScatterND,
+    'sequenceempty': SequenceEmpty,
+    'sequenceconstruct': SequenceConstruct,
+    'sequenceinsert': SequenceInsert,
+    'sequenceat': SequenceAt,
+    'sequenceerase': SequenceErase,
+    'splittosequence': SplitToSequence,
+    'arrayfeatureextractor': ArrayFeatureExtractor,
+    'binarizer': Binarizer,
+    'categorymapper': CategoryMapper,
+    'dictvectorizer': DictVectorizer,
+    'featurevectorizer': FeatureVectorizer,
+    'labelencoder': LabelEncoder,
+    'linearclassifier': LinearClassifier,
+    'linearregressor': LinearRegressor,
+    'normalizer': Normalizer,
+    'svmregressor': SVMRegressor,
+    'scaler': Scaler,
+    'treeensembleclassifier': TreeEnsembleClassifier,
+    'zipmap': ZipMap,
 }
