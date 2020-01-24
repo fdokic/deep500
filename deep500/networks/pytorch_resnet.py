@@ -293,3 +293,50 @@ def export_resnet(batch_size, depth=50, classes=10, file_path='resnet.onnx',
     torch.cuda.empty_cache()
 
     return file_path
+
+import onnx
+import deep500.tools.initialization_graphs
+def resnet_to_training(path: str):
+    net = onnx.load(path)
+
+    #needed: - build of onnx using grpah_init
+    #        - reinstall of d500 with init_graphs
+    #        - sweep graph.initializers for shapes / types / parameters for init_graphs
+    #        - abstract batch_size!
+
+    replaced_initializers = []
+    graph_initializers = []
+    for node in net.graph.node:
+        op = node.op_type
+
+        if op == 'BatchNormalization' or op == 'Conv':
+            inp = node.input
+            for i in inp:
+                name = i.name
+
+                if 'bias' in name and op == 'BatchNormalization':
+                    graph_initializers.append(constant_of_shape(BIAS = 0))
+                    replaced_initializers.append(name)
+
+                if 'weight' in name and op == 'BatchNormalization':
+                    if ('bn3' in name or 'bn2' in name):
+                        graph_initializers.append(constant_of_shape(weight = 0))
+                    else:
+                        graph_initializers.append(constant_of_shape(weight = 1))
+                    replaced_initializers.append(name)
+
+                if 'running_mean'
+                if 'running_var'
+
+                if op == 'Conv':
+                    n = ...
+                    graph_initializers.append(random_normal(mean = 0, std = sqrt(2/n)))
+
+                if 'fc' in name:
+                    if 'weight' in name:
+                    if 'bias' in name:
+
+    net.graph.initializers = [init for init in net.graph.initializers if init.name not in replaced_initializers]
+    net.graph.graph_initializers = graph_initializers
+    onnx.save_model(net, path)
+    return
