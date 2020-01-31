@@ -560,18 +560,56 @@ class OnnxGraph(Element):
         visitor.visit_graph_end(network)
 
 
+class OnnxStringStringEntry:
+    def __init__(self, key: Optional[str], value: Optional[str]):
+        self.key = key
+        self.value = value
+
+    @classmethod
+    def create_from_onnx_entry(cls, entry):
+        key = entry.key
+        value = entry.value
+        return cls(key, value)
+
+
+class OnnxTrainingInfo(Element):
+    def __init__(self, initialization: OnnxGraph, algorithm: OnnxGraph,
+                 initialization_binding: List[OnnxStringStringEntry], algorithm_binding: List[OnnxStringStringEntry]):
+        self.initialization = initialization
+        self.algorithm = algorithm
+        self.initialization_binding = initialization_binding
+        self.algorithm_binding = algorithm_binding
+
+    @classmethod
+    def create_from_onnx_training(cls, training):
+        initialization = training.initialization
+        algorithm = training.algorithm
+        initialization_binding = [OnnxStringStringEntry.create_from_onnx_entry(entry)
+                                  for entry in training.initialization_binding]
+        algorithm_binding = [OnnxStringStringEntry.create_from_onnx_entry(entry)
+                             for entry in training.algorithm_binding]
+        return cls(initialization, algorithm, initialization_binding, algorithm_binding)
+
+    def accept(self, visitor, network):
+        pass
+
+
+
 class OnnxModel(Element):
-    def __init__(self, graph: OnnxGraph, doc_string: Optional[str]):
+    def __init__(self, graph: OnnxGraph, doc_string: Optional[str], training_info: List[OnnxTrainingInfo]):
         self.graph = graph
         self.doc_string = doc_string
+        self.training_info = training_info
 
     @classmethod
     def create_from_onnx_model(cls, model):
         doc_string = model.doc_string
         graph = OnnxGraph.create_from_onnx_graph(model.graph)
+        training_info = [OnnxTrainingInfo.create_from_onnx_training(training) for training
+                         in model.training_info]
         if len(model.metadata_props) > 0:
             raise Exception("TODO: Implement by HBS")  # TODO: Implement by HBS
-        return cls(graph, doc_string)
+        return cls(graph, doc_string, training_info)
 
     def accept(self, visitor, network):
         visitor.visit_model(self, network)
