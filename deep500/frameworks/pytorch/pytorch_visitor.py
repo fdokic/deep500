@@ -93,6 +93,31 @@ class PyTorchVisitor(OnnxBaseVisitor):
     def visit_constant(self, op: Constant, network: PyTorchNetwork):
         self._add_param(op.output[0], torch.tensor(op.value.get_value()), nomove=True)
 
+
+    def visit_constantofshape(self, op: ConstantOfShape, network: PyTorchNetwork):
+        self._add_computation(lambda s: torch.tensor(()).new_full(tuple(s), op.value.get_value()[0]), op.o_output, op.i_input)
+
+    def visit_randomuniform(self, op: RandomUniform, network: PyTorchNetwork):
+        if op.seed is None:
+            self._add_param(op.output[0], torch.tensor(
+                (op.high.get_value() - op.low.get_value()) * torch.rand(op.shape.get_value()) + op.low.get_value(),
+                generator=torch.manual_seed(op.seed.get_value())), trainable=False, nomove=False)
+        else:
+            self._add_param(op.output[0], torch.tensor(
+                (op.high.get_value() - op.low.get_value()) * torch.rand(op.shape.get_value()) + op.low.get_value()),
+                trainable=False, nomove=False)
+
+
+    def visit_randomnormal(self, op: RandomNormal, network: PyTorchNetwork):
+        if op.seed is None:
+            self._add_param(op.output[0], torch.empty(op.shape.get_value()).normal_(mean=op.mean.get_value(),
+                                                                                    std=op.scale.get_value()))
+        else:
+            self._add_param(op.output[0], torch.empty(op.shape.get_value()).normal_(mean=op.mean.get_value(),
+                                                                                    std=op.scale.get_value(),
+                                                                                    generator=torch.manual_seed(
+                                                                                        op.seed.get_value())))
+
     def visit_add(self, op: Add, network: PyTorchNetwork):
         self._add_computation(lambda a, b: a + b, op.o_C, (op.i_A, op.i_B))
 
