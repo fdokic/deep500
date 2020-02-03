@@ -582,8 +582,8 @@ class OnnxTrainingInfo(Element):
 
     @classmethod
     def create_from_onnx_training(cls, training):
-        initialization = training.initialization
-        algorithm = training.algorithm
+        initialization = OnnxGraph.create_from_onnx_graph(training.initialization)
+        algorithm = OnnxGraph.create_from_onnx_graph(training.algorithm)
         initialization_binding = [OnnxStringStringEntry.create_from_onnx_entry(entry)
                                   for entry in training.initialization_binding]
         algorithm_binding = [OnnxStringStringEntry.create_from_onnx_entry(entry)
@@ -645,3 +645,37 @@ class OnnxModel(Element):
         self.graph.nodes.insert(place_to_insert, op)
 
         return place_to_insert
+
+    def initialize(self):
+        from deep500.frameworks.pytorch import PyTorchVisitor, PyTorchNetwork, PyTorchNativeNetwork
+        import deep500 as d5
+        import torch
+
+        initializers = {}
+
+        # calculate all initializers
+        for training in self.training_info:
+
+            if len(training.initialization.nodes) == 0:
+                continue
+
+            # create GraphExecutor graph
+            visitor = PyTorchVisitor()
+            network = PyTorchNetwork()
+            training.initialization.accept(visitor, network)
+            graph = visitor.model.to(d5.utils.DeviceType.CPUDevice())
+            graph.eval()
+            network = PyTorchNativeNetwork(graph)
+
+            # execute model without inputs
+            with torch.no_grad():
+                self.graph()
+
+            # save initializers according to initialization_binding
+            bindings = training.initialization_binding
+            for i, out in enumerate(list(network.outputs)):
+                key = [a.key for a in bindings if a.value == out].pop()
+                initializers[key] = graph._params[out].detach().cpu()
+
+        return initializers
+
