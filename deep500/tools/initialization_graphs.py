@@ -58,7 +58,7 @@ class InitializationGraph:
             name=name + '.node'
         )
 
-        const_tensor = onnx.helper.make_tensor('value', dtype.value, [1], [value])
+        const_tensor = onnx.helper.make_tensor('value', dtype, [1], [value])
 
         upscale_node = onnx.helper.make_node(
             'ConstantOfShape',
@@ -68,7 +68,7 @@ class InitializationGraph:
             name=name + '.node'
         )
 
-        out = onnx.helper.make_tensor_value_info(output, elem_type=dtype.value, shape=shape)
+        out = onnx.helper.make_tensor_value_info(output, elem_type=dtype, shape=shape)
         self.nodes += [const_node, upscale_node]
         self.outputs.append(out)
         return
@@ -101,7 +101,7 @@ class InitializationGraph:
                 seed=seed
             )
 
-        out = onnx.helper.make_tensor_value_info(output, elem_type=dtype.value, shape=shape)
+        out = onnx.helper.make_tensor_value_info(output, elem_type=dtype, shape=shape)
 
         self.nodes.append(upscale_node)
         self.outputs.append(out)
@@ -134,7 +134,7 @@ class InitializationGraph:
                 seed=seed
             )
 
-        out = onnx.helper.make_tensor_value_info(output, elem_type=dtype.value, shape=shape)
+        out = onnx.helper.make_tensor_value_info(output, elem_type=dtype, shape=shape)
 
         self.nodes.append(upscale_node)
         self.outputs.append(out)

@@ -12,11 +12,11 @@ from .pytorch_visitor import PyTorchVisitor
 class PyTorchGraphExecutor(d5.GraphExecutor):
 
     def __init__(self, model: d5.ops.OnnxModel, device: d5.DeviceType,
-                 events: List[d5.ExecutorEvent] = []):
+                 events: List[d5.ExecutorEvent] = [], initializers={}):
         super().__init__(model, events)
         self.devname = 'cuda' if device is None or device.is_gpu() else 'cpu'
         self.network = PyTorchNetwork(device)
-        self.visitor = PyTorchVisitor()
+        self.visitor = PyTorchVisitor(initializers)
         self.is_training = False
         model.accept(self.visitor, self.network)
         self.model = self.visitor.model.to(self.devname)

@@ -574,21 +574,23 @@ class OnnxStringStringEntry:
 
 class OnnxTrainingInfo(Element):
     def __init__(self, initialization: OnnxGraph, algorithm: OnnxGraph,
-                 initialization_binding: List[OnnxStringStringEntry], algorithm_binding: List[OnnxStringStringEntry]):
+                 initialization_binding: List[OnnxStringStringEntry], update_binding: List[OnnxStringStringEntry]):
         self.initialization = initialization
         self.algorithm = algorithm
         self.initialization_binding = initialization_binding
-        self.algorithm_binding = algorithm_binding
+        self.update_binding = update_binding
 
     @classmethod
     def create_from_onnx_training(cls, training):
         initialization = OnnxGraph.create_from_onnx_graph(training.initialization)
         algorithm = OnnxGraph.create_from_onnx_graph(training.algorithm)
-        initialization_binding = [OnnxStringStringEntry.create_from_onnx_entry(entry)
-                                  for entry in training.initialization_binding]
-        algorithm_binding = [OnnxStringStringEntry.create_from_onnx_entry(entry)
-                             for entry in training.algorithm_binding]
-        return cls(initialization, algorithm, initialization_binding, algorithm_binding)
+        initialization_binding = OnnxStringStringEntry.create_from_onnx_entry(training.initialization_binding)
+            # todo: retake this when init_bindings becomes repeated...
+            # [OnnxStringStringEntry.create_from_onnx_entry(entry)
+            #                       for entry in training.initialization_binding]
+        update_binding = [OnnxStringStringEntry.create_from_onnx_entry(entry)
+                             for entry in training.update_binding]
+        return cls(initialization, algorithm, initialization_binding, update_binding)
 
     def accept(self, visitor, network):
         pass
@@ -653,7 +655,7 @@ class OnnxModel(Element):
 
         initializers = {}
 
-        # calculate all initializers
+        # calculate all initializers as torch.tensors directly
         for training in self.training_info:
 
             if len(training.initialization.nodes) == 0:
@@ -661,18 +663,21 @@ class OnnxModel(Element):
 
             # create GraphExecutor graph
             visitor = PyTorchVisitor()
-            network = PyTorchNetwork()
+            network = PyTorchNetwork(d5.utils.device.CPUDevice())
             training.initialization.accept(visitor, network)
-            graph = visitor.model.to(d5.utils.DeviceType.CPUDevice())
+            graph = visitor.model.to('cpu')
             graph.eval()
-            network = PyTorchNativeNetwork(graph)
+            new_network = PyTorchNativeNetwork(graph)
+            new_network.outputs = network.outputs
+            network = new_network
 
             # execute model without inputs
             with torch.no_grad():
-                self.graph()
+                graph()
 
             # save initializers according to initialization_binding
-            bindings = training.initialization_binding
+            # todo: when initialization_binding becomes repeated, switch out
+            bindings = training.update_binding
             for i, out in enumerate(list(network.outputs)):
                 key = [a.key for a in bindings if a.value == out].pop()
                 initializers[key] = graph._params[out].detach().cpu()

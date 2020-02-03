@@ -95,7 +95,7 @@ class PyTorchVisitor(OnnxBaseVisitor):
 
 
     def visit_constantofshape(self, op: ConstantOfShape, network: PyTorchNetwork):
-        self._add_computation(lambda s: torch.tensor(()).new_full(tuple(s), op.value.get_value()[0]), op.o_output, op.i_input)
+        self._add_computation(lambda s: torch.tensor(()).new_full(tuple(s), op.value.get_value()[0]), op.o_output, (op.i_input,))
 
     def visit_randomuniform(self, op: RandomUniform, network: PyTorchNetwork):
         if op.seed is None:

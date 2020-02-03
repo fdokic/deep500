@@ -293,3 +293,76 @@ def export_resnet(batch_size, depth=50, classes=10, file_path='resnet.onnx',
     torch.cuda.empty_cache()
 
     return file_path
+
+
+def resnet_inference_to_training(path: str):
+    import numpy
+    import math
+    import onnx
+    import deep500.tools.initialization_graphs as init
+    from onnx import TrainingInfoProto, StringStringEntryProto, ModelProto, GraphProto
+
+    model = onnx.load(path)
+    initializer_graph = init.InitializationGraph()
+
+    compensated_weights = []
+    for node in model.graph.node:
+        if node.op_type == 'Conv':
+            kernel_shape = [k.ints for k in node.attribute if k.name == 'kernel_shape'].pop()
+            weight_info = [(w.name, w.dims, w.data_type) for w in model.graph.initializer if w.name in node.input].pop()
+            n = numpy.product(kernel_shape) * weight_info[1][1]
+            initializer_graph.add_node('RandomNormal', weight_info[1], (0.0, math.sqrt(2. / n)),
+                                       weight_info[0], weight_info[2])
+            compensated_weights.append(weight_info[0])
+
+        if node.op_type == 'BatchNormalization':
+            for name in node.input:
+                if 'weight' in name or 'running_var' in name:
+                    weight_info = [(w.dims, w.data_type) for w in model.graph.initializer if w.name == name].pop()
+                    initializer_graph.add_node('ConstantOfShape', weight_info[0], 1, name, weight_info[1])
+                    compensated_weights.append(name)
+                #     todo: make true distinction between basic and bottleneck block (not done here)
+                if 'bias' in name or 'running_mean' in name:
+                    weight_info = [(w.dims, w.data_type) for w in model.graph.initializer if w.name == name].pop()
+                    initializer_graph.add_node('ConstantOfShape', weight_info[0], 0, name, weight_info[1])
+                    compensated_weights.append(name)
+
+        if node.op_type == 'Gemm':
+            for name in node.input:
+                if 'weight' in name:
+                    weight_info = [(w.dims, w.data_type) for w in model.graph.initializer if w.name == name].pop()
+                    initializer_graph.add_node('RandomNormal', weight_info[0], (0.0, 0.01), name, weight_info[1])
+                    compensated_weights.append(name)
+
+    onnx_init_graph = initializer_graph.make_graph()
+
+    for w in [w for w in model.graph.initializer if w.name in compensated_weights]:
+        model.graph.initializer.remove(w)
+
+    new_model = ModelProto()
+    new_model.CopyFrom(model)
+    new_model.graph.CopyFrom(model.graph)
+    new_model.graph.input.extend(model.graph.input)
+
+    bindings = initializer_graph.get_bindings()
+    onnx_bindings = []
+    for k in bindings.keys():
+        b = StringStringEntryProto()
+        b.value = bindings[k]
+        b.key = k
+        onnx_bindings.append(b)
+
+    train = TrainingInfoProto()
+    train.initialization.CopyFrom(onnx_init_graph)
+
+    train.update_binding.extend(onnx_bindings)
+
+    new_model.training_info.extend([train])
+    new_path = path[:-5] + '_train.onnx'
+    onnx.save(new_model, new_path)
+
+    # for demo-purpose: save init graph separately for e.g. netron
+    demo = onnx.helper.make_model(onnx_init_graph)
+    onnx.save(demo, 'resnet_init_demo.onnx')
+
+    return new_path
