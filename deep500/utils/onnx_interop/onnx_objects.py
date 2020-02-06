@@ -559,6 +559,55 @@ class OnnxGraph(Element):
             each_node.accept(visitor, network)
         visitor.visit_graph_end(network)
 
+    def extract_partial_graph(self, input_name: str, new_name: Optional[str], old_name: Optional[str]):
+        """
+        This function extracts standalone graphs of disconnected graphs. It only supports extraction of disconnected
+        graphs, since for arbitrary splicing, inference of intermediate ValueInfoProto would be required to specify
+        graph.outputs / inputs.
+
+        Only use on initialized Graphs, function ignores initialization graphs
+
+        :param input_name: name of first input (in topological order) of disconnected graph to be extracted, needs to
+                           have an object in self.inputs where input.name equals input_name
+        :return: returns OnnxGraph containing standalone Graph with graph_input as input. self contains the remainder.
+        """
+        new_input = [input for input in self.inputs if input.name == input_name].pop()
+        if new_input is None:
+            raise Exception('specified input {} does not exist' .format(new_input))
+
+        new_nodes = []
+        current_outputs = set([input_name])
+        pendent_nodes = self.nodes
+        inputs = set([input_name])
+
+        # iterate until all reachable nodes reached
+        change = True
+        while change:
+            change = False
+            for n in pendent_nodes:
+                if any([out for out in n.input if out in current_outputs]):
+                    new_nodes.append(n)
+                    pendent_nodes.remove(n)
+                    current_outputs.update(n.output)
+                    inputs.update(n.input)
+                    change = True
+
+        # extract corresponding inputs, outputs and initializers
+        new_inputs = [input for input in self.inputs if input.name in inputs]
+        new_outputs = [output for output in self.outputs if output.name in current_outputs]
+        new_initializers = [initializers for initializers in self.initializers if initializers.name in inputs]
+        new_graph = OnnxGraph(new_nodes, new_name, new_initializers, None, new_inputs, new_outputs, None)
+        new_model = OnnxModel(new_graph, doc_string=None, training_info=[])
+
+        self.inputs = list(set(self.inputs) - set(new_inputs))
+        self.outputs = list(set(self.outputs) - set(new_outputs))
+        self.initializers = list(set(self.initializers) - set(new_initializers))
+        self.name = old_name
+
+        # todo: split update_bindings?
+        return new_model
+
+
 
 class OnnxStringStringEntry:
     def __init__(self, key: Optional[str], value: Optional[str]):
@@ -683,13 +732,13 @@ class OnnxModel(Element):
 
                 if np.issubdtype(tensor_type, np.single)  \
                         or np.issubdtype(tensor_type, np.float16):
-                    initializer = OnnxFloatTensor(list(np.shape(tensor)), tensor, segment=None, name=key, doc_string=None)
+                    initializer = OnnxFloatTensor(tensor.shape, tensor, segment=None, name=key, doc_string=None)
                 elif np.issubdtype(tensor_type, np.int64):
-                    initializer = OnnxInt64Tensor(list(np.shape(tensor)), tensor, segment=None, name=key, doc_string=None)
+                    initializer = OnnxInt64Tensor(tensor.shape, tensor, segment=None, name=key, doc_string=None)
                 elif np.issubdtype(tensor_type, str):
-                    initializer = OnnxStringTensor(list(np.shape(tensor)), tensor, segment=None, name=key, doc_string=None)
+                    initializer = OnnxStringTensor(tensor.shape, tensor, segment=None, name=key, doc_string=None)
                 elif np.issubdtype(tensor_type, np.double):
-                    initializer = OnnxDoubleTensor(list(np.shape(tensor)), tensor, segment=None, name=key, doc_string=None)
+                    initializer = OnnxDoubleTensor(tensor.shape, tensor, segment=None, name=key, doc_string=None)
                 else:
                     raise Exception('Tensor type: {} is not supported at the moment'
                                     .format(tensor_type))
