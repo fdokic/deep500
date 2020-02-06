@@ -93,30 +93,40 @@ class PyTorchVisitor(OnnxBaseVisitor):
     def visit_constant(self, op: Constant, network: PyTorchNetwork):
         self._add_param(op.output[0], torch.tensor(op.value.get_value()), nomove=True)
 
-
     def visit_constantofshape(self, op: ConstantOfShape, network: PyTorchNetwork):
         self._add_computation(lambda s: torch.tensor(()).new_full(tuple(s), op.value.get_value()[0]), op.o_output, (op.i_input,))
 
     def visit_randomuniform(self, op: RandomUniform, network: PyTorchNetwork):
-        if op.seed is None:
-            self._add_param(op.output[0], torch.tensor(
-                (op.high.get_value() - op.low.get_value()) * torch.rand(op.shape.get_value()) + op.low.get_value(),
-                generator=torch.manual_seed(op.seed.get_value())), trainable=False, nomove=False)
-        else:
-            self._add_param(op.output[0], torch.tensor(
-                (op.high.get_value() - op.low.get_value()) * torch.rand(op.shape.get_value()) + op.low.get_value()),
-                trainable=False, nomove=False)
-
+        high = 1 if op.high is None else op.high.get_value()
+        low = 0 if op.low is None else op.low.get_value()
+        shape = op.shape.get_value()
+        seed = None if op.seed is None else torch.manual_seed(op.seed.get_value())
+        self._add_computation(lambda: torch.tensor((high-low)*torch.rand(shape)+low, generator=seed), op.o_output, ())
 
     def visit_randomnormal(self, op: RandomNormal, network: PyTorchNetwork):
-        if op.seed is None:
-            self._add_param(op.output[0], torch.empty(op.shape.get_value()).normal_(mean=op.mean.get_value(),
-                                                                                    std=op.scale.get_value()))
-        else:
-            self._add_param(op.output[0], torch.empty(op.shape.get_value()).normal_(mean=op.mean.get_value(),
-                                                                                    std=op.scale.get_value(),
-                                                                                    generator=torch.manual_seed(
-                                                                                        op.seed.get_value())))
+        shape = op.shape.get_value()
+        mean = 0 if op.mean is None else op.mean.get_value()
+        std = 1 if op.scale is None else op.scale.get_value()
+        seed = None if op.seed is None else torch.manual_seed(op.seed.get_value())
+        self._add_computation(lambda: torch.empty(shape).normal_(mean=mean, std=std, generator=seed), op.o_output, ())
+
+    def visit_leakyrelu(self, op: LeakyRelu, network: PyTorchNetwork):
+        mod = torch.nn.LeakyReLU(inplace=True)
+        self._add_computation(mod, op.o_Y, (op.i_X,))
+
+    def visit_convtranspose(self, op: ConvTranspose, network: PyTorchNetwork):
+        kwargs = self.get_conv_base(op)
+        conv_shape = self._get_shape(op.i_W)
+
+        mod = torch.nn.ConvTranspose2d(conv_shape[1], conv_shape[0], op.kernel_shape.value, bias=op.i_B is not None,
+                                       **kwargs)
+
+        if op.i_W in self.initializers:
+            mod.weight = torch.nn.Parameter(self.initializers[op.i_W])
+        if op.i_B in self.initializers:
+            mod.bias = torch.nn.Parameter(self.initializers[op.i_B])
+
+        self._add_computation(mod, op.o_Y, (op.i_X,))
 
     def visit_add(self, op: Add, network: PyTorchNetwork):
         self._add_computation(lambda a, b: a + b, op.o_C, (op.i_A, op.i_B))
@@ -282,6 +292,11 @@ class PyTorchVisitor(OnnxBaseVisitor):
             return result
 
         self._add_computation(gemm, op.o_Y, (op.i_A, op.i_B, op.i_C))
+
+    def visit_bce_loss(self, op: BCELoss, network: PyTorchNetwork):
+        mod = torch.nn.BCELoss()
+        self._add_computation(mod, op.o_output, (op.i_X, op.i_target))
+        network.outputs.add(op.o_output)
 
     def visit_softmax_cross_entropy(self, op: SoftmaxCrossEntropy, network: PyTorchNetwork):
         mod = torch.nn.CrossEntropyLoss()

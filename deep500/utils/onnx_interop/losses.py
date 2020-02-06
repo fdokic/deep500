@@ -43,3 +43,14 @@ class MeanSquaredError(Loss):
 
     def accept(self, visitor, network):
         visitor.visit_mean_squared_error(self, network)
+
+
+class BCELoss(Loss):
+    def __init__(self, input: List[str], output: str):
+        super().__init__(input, output)
+        self.i_X = input[0]
+        self.i_target = input[1]
+        self.o_output = output
+
+    def accept(self, visitor, network):
+        visitor.visit_bce_loss(self, network)
