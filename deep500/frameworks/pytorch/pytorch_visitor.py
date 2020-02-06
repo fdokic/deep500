@@ -56,10 +56,10 @@ class GraphModule(nn.Module):
 
 
 class PyTorchVisitor(OnnxBaseVisitor):
-    def __init__(self, initializers={}):
+    def __init__(self):
         self.model = GraphModule()
         self._tensors = {}
-        self.initializers = initializers
+        self.initializers = {}
 
     def _get_shape(self, name):
         return self._tensors[name].type.shape.shape

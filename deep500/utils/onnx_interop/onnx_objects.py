@@ -584,10 +584,8 @@ class OnnxTrainingInfo(Element):
     def create_from_onnx_training(cls, training):
         initialization = OnnxGraph.create_from_onnx_graph(training.initialization)
         algorithm = OnnxGraph.create_from_onnx_graph(training.algorithm)
-        initialization_binding = OnnxStringStringEntry.create_from_onnx_entry(training.initialization_binding)
-            # todo: retake this when init_bindings becomes repeated...
-            # [OnnxStringStringEntry.create_from_onnx_entry(entry)
-            #                       for entry in training.initialization_binding]
+        initialization_binding = [OnnxStringStringEntry.create_from_onnx_entry(entry)
+                                  for entry in training.initialization_binding]
         update_binding = [OnnxStringStringEntry.create_from_onnx_entry(entry)
                              for entry in training.update_binding]
         return cls(initialization, algorithm, initialization_binding, update_binding)
@@ -653,8 +651,7 @@ class OnnxModel(Element):
         import deep500 as d5
         import torch
 
-        initializers = {}
-
+        initializers = []
         # calculate all initializers as torch.tensors directly
         for training in self.training_info:
 
@@ -675,12 +672,33 @@ class OnnxModel(Element):
             with torch.no_grad():
                 graph()
 
-            # save initializers according to initialization_binding
-            # todo: when initialization_binding becomes repeated, switch out
-            bindings = training.update_binding
+            algo_initializers = []
+            bindings = training.initialization_binding
             for i, out in enumerate(list(network.outputs)):
+                # save initializers according to initialization_binding
                 key = [a.key for a in bindings if a.value == out].pop()
-                initializers[key] = graph._params[out].detach().cpu()
 
-        return initializers
+                tensor = graph._params[out].detach().cpu().numpy()
+                tensor_type = tensor.dtype
 
+                if np.issubdtype(tensor_type, np.single)  \
+                        or np.issubdtype(tensor_type, np.float16):
+                    initializer = OnnxFloatTensor(list(np.shape(tensor)), tensor, segment=None, name=key, doc_string=None)
+                elif np.issubdtype(tensor_type, np.int64):
+                    initializer = OnnxInt64Tensor(list(np.shape(tensor)), tensor, segment=None, name=key, doc_string=None)
+                elif np.issubdtype(tensor_type, str):
+                    initializer = OnnxStringTensor(list(np.shape(tensor)), tensor, segment=None, name=key, doc_string=None)
+                elif np.issubdtype(tensor_type, np.double):
+                    initializer = OnnxDoubleTensor(list(np.shape(tensor)), tensor, segment=None, name=key, doc_string=None)
+                else:
+                    raise Exception('Tensor type: {} is not supported at the moment'
+                                    .format(tensor_type))
+
+                if key in [o.name for o in training.algorithm.inputs]:
+                    algo_initializers.append(initializer)
+                else:
+                    initializers.append(initializer)
+
+            training.algorithm.initializers.extend(algo_initializers)
+        self.graph.initializers.extend(initializers)
+        return

@@ -355,7 +355,7 @@ def resnet_inference_to_training(path: str):
     train = TrainingInfoProto()
     train.initialization.CopyFrom(onnx_init_graph)
 
-    train.update_binding.extend(onnx_bindings)
+    train.initialization_binding.extend(onnx_bindings)
 
     new_model.training_info.extend([train])
     new_path = path[:-5] + '_train.onnx'

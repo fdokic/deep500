@@ -12,7 +12,7 @@ def complete_inputs(model: ModelProto):
     missing_inputs = []
     inputs = model.graph.input
     for training in model.training_info:
-        bindings = training.update_binding # todo: change to init_binding when onnx updated
+        bindings = training.initialization_binding
         for output in training.initialization.output:
             input_name = [b.key for b in bindings if b.value == output.name].pop()
             if input_name not in [i.name for i in inputs]:
