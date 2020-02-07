@@ -295,12 +295,13 @@ def export_resnet(batch_size, depth=50, classes=10, file_path='resnet.onnx',
     return file_path
 
 
-def resnet_inference_to_training(path: str):
+def resnet_inference_to_training(path: str, export_init_graph=False):
     import numpy
     import math
     import onnx
     import deep500.tools.initialization_graphs as init
-    from onnx import TrainingInfoProto, StringStringEntryProto, ModelProto, GraphProto
+    import deep500.tools.input_completion as completion
+    from onnx import TrainingInfoProto, StringStringEntryProto, ModelProto
 
     model = onnx.load(path)
     initializer_graph = init.InitializationGraph()
@@ -333,6 +334,11 @@ def resnet_inference_to_training(path: str):
                     weight_info = [(w.dims, w.data_type) for w in model.graph.initializer if w.name == name].pop()
                     initializer_graph.add_node('RandomNormal', weight_info[0], (0.0, 0.01), name, weight_info[1])
                     compensated_weights.append(name)
+                #  # initialize small fc.bias weights - increases file size
+                # if 'bias' in name:
+                #     weight_info = [(w.dims, w.data_type) for w in model.graph.initializer if w.name == name].pop()
+                #     initializer_graph.add_node('ConstantOfShape', weight_info[0], 0, name, weight_info[1])
+                #     compensated_weights.append(name)
 
     onnx_init_graph = initializer_graph.make_graph()
 
@@ -359,10 +365,12 @@ def resnet_inference_to_training(path: str):
 
     new_model.training_info.extend([train])
     new_path = path[:-5] + '_train.onnx'
+    new_model = completion.complete_inputs(new_model)
     onnx.save(new_model, new_path)
 
-    # for demo-purpose: save init graph separately for e.g. netron
-    demo = onnx.helper.make_model(onnx_init_graph)
-    onnx.save(demo, 'resnet_init_demo.onnx')
+    if export_init_graph:
+        # for demo-purpose: save init graph separately for e.g. netron
+        demo = onnx.helper.make_model(onnx_init_graph)
+        onnx.save(demo, 'resnet_init_demo.onnx')
 
     return new_path
