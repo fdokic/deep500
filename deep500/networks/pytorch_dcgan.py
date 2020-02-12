@@ -102,19 +102,24 @@ class DCGan(nn.Module):
         self.ndf = ndf
         self.b_size = b_size
         
-    def forward(self, input):
+    def forward(self, input, noise):
         
-        noise = torch.randn(self.b_size, self.nz, 1, 1, device='cpu')
+        # noise = torch.randn(self.b_size, self.nz, 1, 1, device='cpu')
         return self.netD.forward(input), self.netG.forward(noise)
        
     
 def export_dcgan(nz=100, ngf=64, nc=3, ndf=64, b_size=128, shape=(3, 64, 64), file_path='DCGan.onnx') -> str:
     model = DCGan(nz, ngf, nc, ndf, b_size)
     dummy_input = Variable(torch.randn(b_size, *shape))
-    
-    torch.onnx.export(model, dummy_input, file_path, verbose=False,
+    dummy_noise = Variable(torch.randn(model.b_size, model.nz, 1, 1))
+    input = (dummy_input, dummy_noise)
+    torch.onnx.export(model, input, file_path, verbose=False,
                       training=True)
     return file_path
+
+def export_train_dcgan(nz=100, ngf=64, nc=3, ndf=64, b_size=128, shape=(3, 64, 64), file_path='DCGan.onnx') -> str:
+    path = export_dcgan(nz, ngf, nc, ndf, b_size, shape, file_path=file_path)
+    return dcgan_inference_to_training(path)
 
 
 def export_discriminator(nc=3, ndf=64, b_size=128, shape=(3, 64, 64), file_path='DCGan_D.onnx') -> str:
@@ -206,15 +211,4 @@ def dcgan_inference_to_training(path: str, export_init_graph=False):
 
     return new_path
 
-
-
-"""
-def weights_init(m):
-    classname = m.__class__.__name__
-    if classname.find('Conv') != -1:
-        nn.init.normal_(m.weight.data, 0.0, 0.02)
-    elif classname.find('BatchNorm') != -1:
-        nn.init.normal_(m.weight.data, 1.0, 0.02)
-        nn.init.constant_(m.bias.data, 0)
-"""
 

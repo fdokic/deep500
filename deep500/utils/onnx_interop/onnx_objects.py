@@ -559,7 +559,7 @@ class OnnxGraph(Element):
             each_node.accept(visitor, network)
         visitor.visit_graph_end(network)
 
-    def extract_partial_graph(self, input_name: str, new_name: Optional[str], old_name: Optional[str]):
+    def extract_partial_graph(self, input_name: str, new_name: Optional[str] = '', old_name: Optional[str] = ''):
         """
         This function extracts standalone graphs of disconnected graphs. It only supports extraction of disconnected
         graphs, since for arbitrary splicing, inference of intermediate ValueInfoProto would be required to specify

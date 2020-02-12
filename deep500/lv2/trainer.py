@@ -1,5 +1,7 @@
 import copy
 import os
+import numpy as np
+import torch
 from typing import List, Optional, Type
 
 from deep500.lv1.graph_executor import GraphExecutor
@@ -125,3 +127,90 @@ class Trainer(object):
             del self.test_set.events[-len(sampler_events):]
 
         return stats
+
+
+class DCGanTrainer(Trainer):
+    def __init__(self,
+                 training_sampler: Sampler,
+                 noise_sampler: Sampler,
+                 D_executor: GraphExecutor,
+                 G_executor: GraphExecutor,
+                 D_optimizer: Optimizer,
+                 G_optimizer: Optimizer,
+                 D_input_node: str,
+                 G_input_node: str,
+                 network_output: Optional[str]=None,
+                 validation_sampler: Optional[Sampler]=None):
+        super().__init__(training_sampler, None, D_executor, D_optimizer, None)
+        self.train_set = training_sampler
+        self.noise_set = noise_sampler
+        self.test_set = validation_sampler
+        self.D_executor = D_executor
+        self.G_executor = G_executor
+        self.D_optimizer = D_optimizer
+        self.G_optimizer = G_optimizer
+        self.D_input_node = D_input_node
+        self.G_input_node = G_input_node
+        self.network_output = network_output
+        self.fake_label = torch.ones(self.train_set.batch_size, 1, 1, 1).to(self.D_executor.devname)
+        self.real_label = torch.zeros(self.train_set.batch_size, 1, 1, 1).to(self.D_executor.devname)
+
+    def _train(self, stats, events, optimizer_events):
+        self.train_set.reset()
+        self.noise_set.reset()
+        for event in events: event.before_training_set(self, stats, self.train_set)
+
+        for i in range(len(self.train_set)):
+            images = self.train_set()
+            noise = self.noise_set()
+
+            for event in events:
+                event.before_optimizer_step(self.executor, self, images)
+
+                loss_d, loss_g = self._train_algo_step(images, noise)
+
+            for event in events:
+                event.after_optimizer_step(self.executor, self, loss_d, loss_g)
+
+        for event in events: event.after_training_set(self, stats)
+
+    def _train_algo_step(self, images, noise):
+        # place to start optimizer_events
+
+        self.D_optimizer.op.zero_grad()
+        self.G_optimizer.op.zero_grad()
+
+        # ------ train Discriminator ------
+        # pass real samples
+        images[self.D_input_node] = np.reshape(images[self.D_input_node], (self.train_set.batch_size, 3, 64, 64))
+        self.D_executor.model._params[self.D_input_node] = torch.tensor(images[self.D_input_node]).to(
+            self.D_executor.devname)
+        self.D_executor.model._params['label'] = self.real_label
+        loss_real = self.D_executor.model()
+        loss_real.backward()
+
+        # pass fake samples
+        for name, val in noise.items():
+            self.G_executor.model._params[name] = torch.tensor(val).to(self.G_executor.devname)
+
+        fakes = self.G_executor.model()
+        self.D_executor.model._params[self.D_input_node] = fakes.detach()
+        self.D_executor.model._params['label'] = self.fake_label
+        loss_fakes = self.D_executor.model()
+        loss_fakes.backward()
+        self.D_optimizer.op.step()
+        loss_d = loss_fakes + loss_real
+
+        # ----- train Generator -----
+        self.D_executor.model._params[self.D_input_node] = fakes
+        self.D_executor.model._params['label'] = self.real_label
+
+        loss_g = self.D_executor.model()
+        loss_g.backward()
+        self.G_optimizer.op.step()
+
+        return loss_d, loss_g
+
+    def _test_accuracy(self, stats, events):
+        pass
+

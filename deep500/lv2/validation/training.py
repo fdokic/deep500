@@ -11,7 +11,8 @@ def test_training(executor: GraphExecutor, training_set: SamplerOrDataset,
                   validation_set: Optional[SamplerOrDataset], optimizer: Optimizer, 
                   epochs: int, batch_size: int, output_node: Optional[str] = None,
                   metrics: List[TestMetric] = DefaultTrainingMetrics(),
-                  events: List[TrainingEvent] = None) -> List[Any]:
+                  events: List[TrainingEvent] = None,
+                  trainer: Optional[Trainer] = None) -> List[Any]:
     """ Tests training for a given number of epochs and reports metrics.
         @param executor The graph executor to run.
         @param training_set The training set sampler or dataset to use. 
@@ -51,7 +52,7 @@ def test_training(executor: GraphExecutor, training_set: SamplerOrDataset,
         raise ValueError('Training set type not supported')
 
     # Create trainer
-    trainer = Trainer(tsampler, vsampler, executor, optimizer, output_node)
+    trainer = trainer or Trainer(tsampler, vsampler, executor, optimizer, output_node)
 
     # Add metrics to events as necessary
     for metric in metrics:
