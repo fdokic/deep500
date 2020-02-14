@@ -185,7 +185,7 @@ class DCGanTrainer(Trainer):
         # place to start optimizer_events
 
         self.D_executor.model.zero_grad()
-
+        self.D_optimizer.op.zero_grad()
         # ------ train Discriminator ------
         # pass real samples
         self.D_executor.model._params[self.D_input_node] = torch.tensor(images[self.D_input_node]).to(
@@ -208,8 +208,7 @@ class DCGanTrainer(Trainer):
 
         # ----- train Generator -----
         self.G_executor.model.zero_grad()
-        self.D_optimizer.op.zero_grad()
-        self.D_executor.model.zero_grad()
+        self.G_optimizer.op.zero_grad()
 
         self.D_executor.model._params[self.D_input_node] = fakes
         self.D_executor.model._params['label'] = self.real_label
