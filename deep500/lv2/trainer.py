@@ -2,10 +2,11 @@ import copy
 import os
 import numpy as np
 import torch
+import timeit
 from typing import List, Optional, Type
 
 from deep500.lv1.graph_executor import GraphExecutor
-from deep500.lv2.summaries import TrainingStatistics
+from deep500.lv2.summaries import TrainingStatistics, EpochSummary
 from deep500.lv2.events.summary_generator import SummaryGeneratorEvent
 from deep500.lv2.optimizer import Optimizer
 from deep500.lv2.sampler import Sampler
@@ -160,17 +161,23 @@ class DCGanTrainer(Trainer):
         self.noise_set.reset()
         for event in events: event.before_training_set(self, stats, self.train_set)
 
+        epoch_loss = EpochSummary(True, 0)
         for i in range(len(self.train_set)):
             images = self.train_set()
             noise = self.noise_set()
 
             for event in optimizer_events:
                 event.before_optimizer_step(self.executor, self, images)
-
+                start = timeit.timeit()
                 loss_d, loss_g = self._train_algo_step(images, noise)
+                stop = timeit.timeit()
+                epoch_loss.wrong_batch.append((loss_d.item(), loss_g.item(), stop-start))
+
 
             for event in optimizer_events:
                 event.after_optimizer_step(self.executor, self, loss_d, loss_g)
+
+        stats.test_summaries.append(epoch_loss)
 
         for event in events: event.after_training_set(self, stats)
 
@@ -208,7 +215,7 @@ class DCGanTrainer(Trainer):
         loss_g.backward()
         self.G_optimizer.op.step()
 
-        return loss_d, loss_g
+        return loss_d.detach().numpy(), loss_g.detach().numpy()
 
     def _test_accuracy(self, stats, events):
         pass
