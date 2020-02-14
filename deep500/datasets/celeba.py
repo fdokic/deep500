@@ -88,7 +88,7 @@ class noise_loader():
         self.sample_shape = sample_shape
 
     def __call__(self, indices):
-        return np.random.rand(len(indices), *self.sample_shape).astype(np.float32)
+        return np.random.normal(0, 1, shape=(len(indices), *self.sample_shape).astype(np.float32))
 
 def load_noise(input_node, data_size, sample_shape):
     loader = noise_loader(sample_shape)
