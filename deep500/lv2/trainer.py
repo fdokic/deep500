@@ -186,6 +186,8 @@ class DCGanTrainer(Trainer):
 
         self.D_optimizer.op.zero_grad()
         self.G_optimizer.op.zero_grad()
+        self.D_executor.model.zero_grad()
+        self.G_executor.model.zero_grad()
 
         # ------ train Discriminator ------
         # pass real samples
