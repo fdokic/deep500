@@ -88,11 +88,11 @@ class noise_loader():
         self.sample_shape = sample_shape
 
     def __call__(self, indices):
-        return np.random.normal(0, 1, shape=(len(indices), *self.sample_shape).astype(np.float32))
+        return np.random.normal(0, 1, size=(len(indices), *self.sample_shape)).astype(np.float32)
 
 def load_noise(input_node, data_size, sample_shape):
     loader = noise_loader(sample_shape)
-    return FileListDataset(list(range(0, data_size)), input_node, loader)
+    return FileListDataset(np.asarray(list(range(0, data_size))), input_node, loader)
 
 def load_celeba(input_node='', folder_path='', normalize=True):
     if not os.path.exists(folder_path + '/img_align_celeba'):
