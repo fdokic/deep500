@@ -164,12 +164,12 @@ class DCGanTrainer(Trainer):
             images = self.train_set()
             noise = self.noise_set()
 
-            for event in events:
+            for event in optimizer_events:
                 event.before_optimizer_step(self.executor, self, images)
 
                 loss_d, loss_g = self._train_algo_step(images, noise)
 
-            for event in events:
+            for event in optimizer_events:
                 event.after_optimizer_step(self.executor, self, loss_d, loss_g)
 
         for event in events: event.after_training_set(self, stats)
@@ -182,7 +182,6 @@ class DCGanTrainer(Trainer):
 
         # ------ train Discriminator ------
         # pass real samples
-        images[self.D_input_node] = np.reshape(images[self.D_input_node], (self.train_set.batch_size, 3, 64, 64))
         self.D_executor.model._params[self.D_input_node] = torch.tensor(images[self.D_input_node]).to(
             self.D_executor.devname)
         self.D_executor.model._params['label'] = self.real_label
