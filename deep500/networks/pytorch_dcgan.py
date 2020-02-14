@@ -165,16 +165,18 @@ def dcgan_inference_to_training(path: str, export_init_graph=False):
                                                weight_info[2])
                     compensated_weights.append(name)
                 if 'bias' in name or 'running_mean' in name:
-                    weight_info = [(w.name, w.dims, w.data_type) for w in model.graph.initializer if
-                                   w.name == name].pop()
-                    initializer_graph.add_node('ConstantOfShape', weight_info[1], 0, name, weight_info[2])
-                    compensated_weights.append(name)
+                    pass
+                    # weight_info = [(w.name, w.dims, w.data_type) for w in model.graph.initializer if
+                    #                w.name == name].pop()
+                    # initializer_graph.add_node('ConstantOfShape', weight_info[1], 0, name, weight_info[2])
+                    # compensated_weights.append(name)
                 # if 'running_mean' in name:
                 if 'running_var' in name:
-                    weight_info = [(w.name, w.dims, w.data_type) for w in model.graph.initializer if
-                                   w.name == name].pop()
-                    initializer_graph.add_node('ConstantOfShape', weight_info[1], 1, name, weight_info[2])
-                    compensated_weights.append(name)
+                    pass
+                    # weight_info = [(w.name, w.dims, w.data_type) for w in model.graph.initializer if
+                    #                w.name == name].pop()
+                    # initializer_graph.add_node('ConstantOfShape', weight_info[1], 1, name, weight_info[2])
+                    # compensated_weights.append(name)
 
     onnx_init_graph = initializer_graph.make_graph()
 
