@@ -215,7 +215,7 @@ class DCGanTrainer(Trainer):
         loss_g.backward()
         self.G_optimizer.op.step()
 
-        return loss_d.detach().numpy(), loss_g.detach().numpy()
+        return loss_d.detach().cpu().numpy(), loss_g.detach().cpu().numpy()
 
     def _test_accuracy(self, stats, events):
         pass
