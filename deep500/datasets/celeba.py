@@ -73,8 +73,8 @@ class celeba_loader():
             if self.normalize:
                 pix = np.array(img).astype(np.float32)
                 for i in range(3):
-                    pix[:, :, i] -= np.mean(pix[:, :, i])
-                    pix[:, :, i] /= np.std(pix[:, :, i])
+                    pix[:, :, i] -= 0.5 # np.mean(pix[:, :, i])
+                    pix[:, :, i] /= 0.5 # np.std(pix[:, :, i])
             else:
                 pix = np.array(img).astype(np.float32)
             batch[i, :, :, :] = pix
@@ -82,6 +82,17 @@ class celeba_loader():
         # reshape to (3, 64, 64) as needed by DCGAN and cast to floats
         batch = np.reshape(batch, (-1, 3, 64, 64)).astype(np.float32)
         return batch
+
+class noise_loader():
+    def __init__(self, sample_shape):
+        self.sample_shape = sample_shape
+
+    def __call__(self, indices):
+        return np.random.rand(len(indices), *self.sample_shape).astype(np.float32)
+
+def load_noise(input_node, data_size, sample_shape):
+    loader = noise_loader(sample_shape)
+    return FileListDataset(list(range(0, data_size)), input_node, loader)
 
 def load_celeba(input_node='', folder_path='', normalize=True):
     if not os.path.exists(folder_path + '/img_align_celeba'):
