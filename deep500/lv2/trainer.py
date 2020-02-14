@@ -183,7 +183,8 @@ class DCGanTrainer(Trainer):
 
     def _train_algo_step(self, images, noise):
         # place to start optimizer_events
-
+        self.G_executor.model.zero_grad()
+        self.G_optimizer.op.zero_grad()
         self.D_executor.model.zero_grad()
         self.D_optimizer.op.zero_grad()
         # ------ train Discriminator ------
@@ -209,6 +210,8 @@ class DCGanTrainer(Trainer):
         # ----- train Generator -----
         self.G_executor.model.zero_grad()
         self.G_optimizer.op.zero_grad()
+        self.D_executor.model.zero_grad()
+        self.D_optimizer.op.zero_grad()
 
         self.D_executor.model._params[self.D_input_node] = fakes
         self.D_executor.model._params['label'] = self.real_label
