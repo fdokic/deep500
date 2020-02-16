@@ -73,8 +73,8 @@ class celeba_loader():
             if self.normalize:
                 pix = np.array(img).astype(np.float32)
                 for j in range(3):
-                    pix[:, :, j] -= np.mean(pix[:, :, i])
-                    pix[:, :, j] /= np.std(pix[:, :, i])
+                    pix[:, :, j] -= np.mean(pix[:, :, j])
+                    pix[:, :, j] /= np.std(pix[:, :, j])
             else:
                 pix = np.array(img).astype(np.float32)
             batch[i, :, :, :] = pix
