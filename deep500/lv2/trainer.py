@@ -183,12 +183,14 @@ class DCGanTrainer(Trainer):
 
     def _train_algo_step(self, images, noise):
         # place to start optimizer_events
+        device = torch.device("cuda:0" if (torch.cuda.is_available()) else "cpu")
+
         self.D_executor.model.zero_grad()
         # ------ train Discriminator ------
         # pass real samples
         self.D_executor.model._params[self.D_input_node] = torch.tensor(images[self.D_input_node]).to(
             self.D_executor.devname)
-        self.D_executor.model._params['label'] = self.real_label
+        self.D_executor.model._params['label'] = torch.full((128,), 1, device=device)# self.real_label
         loss_real = self.D_executor.model()
         loss_real.backward()
 
@@ -198,17 +200,17 @@ class DCGanTrainer(Trainer):
 
         fakes = self.G_executor.model()
         self.D_executor.model._params[self.D_input_node] = fakes.detach()
-        self.D_executor.model._params['label'] = self.fake_label
+        self.D_executor.model._params['label'] = torch.full((128,), 0, device=device) # self.fake_label
         loss_fakes = self.D_executor.model()
         loss_fakes.backward()
-        self.D_optimizer.op.step()
         loss_d = loss_fakes + loss_real
+        self.D_optimizer.op.step()
 
         # ----- train Generator -----
         self.G_executor.model.zero_grad()
 
         self.D_executor.model._params[self.D_input_node] = fakes
-        self.D_executor.model._params['label'] = self.real_label
+        self.D_executor.model._params['label'] = torch.full((128,), 1, device=device) # self.real_label
 
         loss_g = self.D_executor.model()
         loss_g.backward()
