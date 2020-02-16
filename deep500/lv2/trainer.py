@@ -162,22 +162,24 @@ class DCGanTrainer(Trainer):
         for event in events: event.before_training_set(self, stats, self.train_set)
 
         epoch_loss = EpochSummary(True, 0)
+        ep_start = timeit.timeit()
         for i in range(len(self.train_set)):
             images = self.train_set()
             noise = self.noise_set()
 
             for event in optimizer_events:
                 event.before_optimizer_step(self.executor, self, images)
-                start = timeit.timeit()
+                # start = timeit.timeit()
                 loss_d, loss_g = self._train_algo_step(images, noise)
-                stop = timeit.timeit()
-                epoch_loss.wrong_batch.append((loss_d.item(), loss_g.item(), stop-start))
+                # stop = timeit.timeit()
+                epoch_loss.wrong_batch.append((loss_d.item(), loss_g.item()))
 
 
             for event in optimizer_events:
                 event.after_optimizer_step(self.executor, self, loss_d, loss_g)
-
-        stats.test_summaries.append(epoch_loss)
+        ep_end = timeit.timeit()
+        res = (epoch_loss, ep_end - ep_start)
+        stats.test_summaries.append(res)
 
         for event in events: event.after_training_set(self, stats)
 
