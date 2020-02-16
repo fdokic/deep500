@@ -153,8 +153,8 @@ class DCGanTrainer(Trainer):
         self.D_input_node = D_input_node
         self.G_input_node = G_input_node
         self.network_output = network_output
-        self.fake_label = torch.ones(self.train_set.batch_size, 1, 1, 1).to(self.D_executor.devname)
-        self.real_label = torch.zeros(self.train_set.batch_size, 1, 1, 1).to(self.D_executor.devname)
+        self.fake_label = torch.zeros(self.train_set.batch_size, 1, 1, 1).to(self.D_executor.devname)
+        self.real_label = torch.ones(self.train_set.batch_size, 1, 1, 1).to(self.D_executor.devname)
 
     def _train(self, stats, events, optimizer_events):
         self.train_set.reset()
@@ -183,14 +183,13 @@ class DCGanTrainer(Trainer):
 
     def _train_algo_step(self, images, noise):
         # place to start optimizer_events
-        device = torch.device("cuda:0" if (torch.cuda.is_available()) else "cpu")
 
         self.D_executor.model.zero_grad()
         # ------ train Discriminator ------
         # pass real samples
         self.D_executor.model._params[self.D_input_node] = torch.tensor(images[self.D_input_node]).to(
             self.D_executor.devname)
-        self.D_executor.model._params['label'] = torch.full((128,), 1, device=device)# self.real_label
+        self.D_executor.model._params['label'] = self.real_label
         loss_real = self.D_executor.model()
         loss_real.backward()
 
@@ -200,7 +199,7 @@ class DCGanTrainer(Trainer):
 
         fakes = self.G_executor.model()
         self.D_executor.model._params[self.D_input_node] = fakes.detach()
-        self.D_executor.model._params['label'] = torch.full((128,), 0, device=device) # self.fake_label
+        self.D_executor.model._params['label'] = self.fake_label
         loss_fakes = self.D_executor.model()
         loss_fakes.backward()
         loss_d = loss_fakes + loss_real
@@ -210,7 +209,7 @@ class DCGanTrainer(Trainer):
         self.G_executor.model.zero_grad()
 
         self.D_executor.model._params[self.D_input_node] = fakes
-        self.D_executor.model._params['label'] = torch.full((128,), 1, device=device) # self.real_label
+        self.D_executor.model._params['label'] =  self.real_label
 
         loss_g = self.D_executor.model()
         loss_g.backward()
