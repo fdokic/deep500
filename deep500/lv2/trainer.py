@@ -183,12 +183,13 @@ class DCGanTrainer(Trainer):
 
     def _train_algo_step(self, images, noise):
         # place to start optimizer_events
-
         self.D_executor.model.zero_grad()
+        self.D_optimizer.op.zero_grad()
         # ------ train Discriminator ------
         # pass real samples
         self.D_executor.model._params[self.D_input_node] = torch.tensor(images[self.D_input_node]).to(
             self.D_executor.devname)
+        # img_mean = torch.mean(self.D_executor.model._params[self.D_input_node].detach())
         self.D_executor.model._params['label'] = self.real_label
         loss_real = self.D_executor.model()
         loss_real.backward()
@@ -198,6 +199,7 @@ class DCGanTrainer(Trainer):
             self.G_executor.model._params[name] = torch.tensor(val).to(self.G_executor.devname)
 
         fakes = self.G_executor.model()
+        # fake_mean = torch.mean(fakes.detach())
         self.D_executor.model._params[self.D_input_node] = fakes.detach()
         self.D_executor.model._params['label'] = self.fake_label
         loss_fakes = self.D_executor.model()
@@ -207,15 +209,19 @@ class DCGanTrainer(Trainer):
 
         # ----- train Generator -----
         self.G_executor.model.zero_grad()
+        self.G_optimizer.op.zero_grad()
 
         self.D_executor.model._params[self.D_input_node] = fakes
-        self.D_executor.model._params['label'] =  self.real_label
+        self.D_executor.model._params['label'] = self.real_label
 
         loss_g = self.D_executor.model()
         loss_g.backward()
         self.G_optimizer.op.step()
+        loss_d = loss_d.detach().cpu().numpy()
+        loss_g = loss_g.detach().cpu().numpy()
+        # print(loss_d, loss_g, img_mean.detach().cpu().numpy().item(), fake_mean.detach().cpu().numpy().item())
 
-        return loss_d.detach().cpu().numpy(), loss_g.detach().cpu().numpy()
+        return loss_d, loss_g
 
     def _test_accuracy(self, stats, events):
         pass
