@@ -2,6 +2,7 @@ import argparse
 import torch
 import torch.nn as nn
 from torchvision.models.resnet import model_urls, load_state_dict_from_url
+from torch.autograd import Variable
 import numpy as np
 
 import deep500 as d5
@@ -10,10 +11,10 @@ import deep500.frameworks.reference as d5ref
 from deep500.frameworks import pytorch as d5fw
 from deep500.networks.pytorch_resnet import ResNet, Bottleneck
 
-try:
-    import av
-except (ImportError, ModuleNotFoundError) as ex:
-    raise ImportError('Cannot load ucf101 videos without av: %s' % str(ex))
+# try:
+#     import av
+# except (ImportError, ModuleNotFoundError) as ex:
+#     raise ImportError('Cannot load ucf101 videos without av: %s' % str(ex))
 
 class ResNetLSTM(ResNet):
     def __init__(self, num_classes=101, inplanes=64,
@@ -51,6 +52,7 @@ class ResNetLSTM(ResNet):
             embed_seq.append(self.features(x[:,t,:,:,:]))
         embed_seq = torch.stack(embed_seq, dim=0)
 
+        # embed_seq = self.features(x)
         out, _ = self.lstm(embed_seq)
         out = out.clone().transpose_(0, 1) #batch first
         out = self.fc(out.contiguous().view(-1, self.lstm_hidden_size))
@@ -76,3 +78,14 @@ def ResNet50LSTM(num_classes=101, pretrained=True):
 def ResNet101LSTM(num_classes=101, pretrained=True):
     return _resnetlstm('resnet101',  pretrained=pretrained,
                        block=Bottleneck, layers=[3, 4, 23, 3], num_classes=num_classes)
+
+def export_50(file_path:str = 'resnet_lstm.onnx', shape=(3, 32, 32), batch_size=1, sequence_length=1):
+    net = ResNet50LSTM()
+    dummy_input = Variable(torch.zeros((batch_size, sequence_length, *shape)))
+
+    torch.onnx.export(net, dummy_input, file_path, verbose=False)
+
+    del net
+    torch.cuda.empty_cache()
+
+    return file_path
