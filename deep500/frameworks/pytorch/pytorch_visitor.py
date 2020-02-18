@@ -111,7 +111,7 @@ class PyTorchVisitor(OnnxBaseVisitor):
         self._add_computation(lambda: torch.empty(shape).normal_(mean=mean, std=std, generator=seed), op.o_output, ())
 
     def visit_leakyrelu(self, op: LeakyRelu, network: PyTorchNetwork):
-        mod = torch.nn.LeakyReLU(inplace=True)
+        mod = torch.nn.LeakyReLU(negative_slope=op.alpha, inplace=True)
         self._add_computation(mod, op.o_Y, (op.i_X,))
 
     def visit_convtranspose(self, op: ConvTranspose, network: PyTorchNetwork):
