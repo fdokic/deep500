@@ -118,7 +118,7 @@ class PyTorchVisitor(OnnxBaseVisitor):
         kwargs = self.get_conv_base(op)
         conv_shape = self._get_shape(op.i_W)
 
-        mod = torch.nn.ConvTranspose2d(conv_shape[1], conv_shape[0], op.kernel_shape.value, bias=op.i_B is not None,
+        mod = torch.nn.ConvTranspose2d(conv_shape[0], conv_shape[1], op.kernel_shape.value, bias=op.i_B is not None,
                                        **kwargs)
 
         if op.i_W in self.initializers:
