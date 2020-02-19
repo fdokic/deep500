@@ -151,10 +151,10 @@ class PyTorchVisitor(OnnxBaseVisitor):
             self._add_computation(torch.narrow, op.o_output, (op.o_output,))
 
     def visit_sigmoid(self, op: Sigmoid, network: PyTorchNetwork):
-        self._add_computation(torch.sigmoid, op.o_Y, (op.i_X,))
+        self._add_computation(torch.nn.Sigmoid(), op.o_Y, (op.i_X,))
 
     def visit_tanh(self, op: Tanh, network: PyTorchNetwork):
-        self._add_computation(torch.tanh, op.o_output, (op.i_input,))
+        self._add_computation(torch.nn.Tanh(), op.o_output, (op.i_input,))
 
     def visit_mul(self, op: Mul, network: PyTorchNetwork):
         self._add_computation(lambda a, b: a * b, op.o_C, (op.i_A, op.i_B))

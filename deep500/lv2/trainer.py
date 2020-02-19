@@ -222,6 +222,7 @@ class DCGanTrainer(Trainer):
         loss_d = loss_d.detach().cpu().numpy()
         loss_g = loss_g.detach().cpu().numpy()
         # print(loss_d, loss_g, img_mean.detach().cpu().numpy().item(), fake_mean.detach().cpu().numpy().item())
+        print(loss_d, loss_g)
 
         return loss_d, loss_g
 
