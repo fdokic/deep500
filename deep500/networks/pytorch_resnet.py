@@ -9,6 +9,9 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 
+import deep500.tools.input_completion as completion
+import onnx
+
 def conv3x3(in_planes, out_planes, stride=1, groups=1, bias=False):
     """ 3x3 convolution with padding """
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
@@ -288,6 +291,10 @@ def export_resnet(batch_size, depth=50, classes=10, file_path='resnet.onnx',
 
     torch.onnx.export(net, dummy_input, file_path, verbose=False)
 
+    model = onnx.load(file_path)
+    model = completion.complete_inputs(model)
+    onnx.save(model, file_path)
+
     # Free memory
     del net
     torch.cuda.empty_cache()
@@ -298,9 +305,7 @@ def export_resnet(batch_size, depth=50, classes=10, file_path='resnet.onnx',
 def resnet_inference_to_training(path: str, export_init_graph=False):
     import numpy
     import math
-    import onnx
     import deep500.tools.initialization_graphs as init
-    import deep500.tools.input_completion as completion
     from onnx import TrainingInfoProto, StringStringEntryProto, ModelProto
 
     model = onnx.load(path)
