@@ -111,14 +111,14 @@ class PyTorchVisitor(OnnxBaseVisitor):
         self._add_computation(lambda: torch.empty(shape).normal_(mean=mean, std=std, generator=seed), op.o_output, ())
 
     def visit_leakyrelu(self, op: LeakyRelu, network: PyTorchNetwork):
-        mod = torch.nn.LeakyReLU(negative_slope=op.alpha, inplace=True)
+        mod = torch.nn.LeakyReLU(negative_slope=op.alpha.get_value(), inplace=True)
         self._add_computation(mod, op.o_Y, (op.i_X,))
 
     def visit_convtranspose(self, op: ConvTranspose, network: PyTorchNetwork):
         kwargs = self.get_conv_base(op)
         conv_shape = self._get_shape(op.i_W)
 
-        mod = torch.nn.ConvTranspose2d(conv_shape[1], conv_shape[0], op.kernel_shape.value, bias=op.i_B is not None,
+        mod = torch.nn.ConvTranspose2d(conv_shape[0], conv_shape[1], op.kernel_shape.value, bias=op.i_B is not None,
                                        **kwargs)
 
         if op.i_W in self.initializers:
@@ -151,10 +151,10 @@ class PyTorchVisitor(OnnxBaseVisitor):
             self._add_computation(torch.narrow, op.o_output, (op.o_output,))
 
     def visit_sigmoid(self, op: Sigmoid, network: PyTorchNetwork):
-        self._add_computation(torch.sigmoid, op.o_Y, (op.i_X,))
+        self._add_computation(torch.nn.Sigmoid(), op.o_Y, (op.i_X,))
 
     def visit_tanh(self, op: Tanh, network: PyTorchNetwork):
-        self._add_computation(torch.tanh, op.o_output, (op.i_input,))
+        self._add_computation(torch.nn.Tanh(), op.o_output, (op.i_input,))
 
     def visit_mul(self, op: Mul, network: PyTorchNetwork):
         self._add_computation(lambda a, b: a * b, op.o_C, (op.i_A, op.i_B))

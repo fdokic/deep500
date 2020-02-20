@@ -40,10 +40,15 @@ def update_dimensions(model, input_dim=None, output_dim=None):  # type: (ModelPr
     if not (bool(input_dim) and bool(output_dim)):
         return model
 
-    # Separate graph inputs from initializers from graph.input set
+    # Separate graph inputs from initializers from graph.input set and initialization_bindings
     inputs = set(i.name for i in model.graph.input)
     initializers = set(i.name for i in model.graph.initializer)
-    graph_inputs = inputs - initializers
+    bindings = []
+    for t in model.training_info:
+        for b in t.initialization_binding:
+            bindings.append(b.key)
+    bindings = set(bindings)
+    graph_inputs = inputs - initializers - bindings
 
     outputs = model.graph.output
 

@@ -318,12 +318,12 @@ def resnet_inference_to_training(path: str, export_init_graph=False):
 
         if node.op_type == 'BatchNormalization':
             for name in node.input:
-                if 'weight' in name or 'running_var' in name:
+                if ('weight' in name) and ('bn3' not in name) or 'running_var' in name:
                     weight_info = [(w.dims, w.data_type) for w in model.graph.initializer if w.name == name].pop()
                     initializer_graph.add_node('ConstantOfShape', weight_info[0], 1, name, weight_info[1])
                     compensated_weights.append(name)
-                #     todo: make true distinction between basic and bottleneck block (not done here)
-                if 'bias' in name or 'running_mean' in name:
+
+                if 'bias' in name or 'running_mean' in name or 'bn3.weight' in name:
                     weight_info = [(w.dims, w.data_type) for w in model.graph.initializer if w.name == name].pop()
                     initializer_graph.add_node('ConstantOfShape', weight_info[0], 0, name, weight_info[1])
                     compensated_weights.append(name)
@@ -348,7 +348,6 @@ def resnet_inference_to_training(path: str, export_init_graph=False):
     new_model = ModelProto()
     new_model.CopyFrom(model)
     new_model.graph.CopyFrom(model.graph)
-    new_model.graph.input.extend(model.graph.input)
 
     bindings = initializer_graph.get_bindings()
     onnx_bindings = []
