@@ -36,7 +36,7 @@ import deep500.networks as d5nt
 
 def run_recipe(fixed: Dict[str, Any],
                mutable: Dict[str, Any],
-               metrics: List[Tuple[d5.TestMetric, Any]], stats_path: str, save_stats=True) -> bool:
+               metrics: List[Tuple[d5.TestMetric, Any]], stats_path: str) -> bool:
     """ Runs a Deep500 recipe (see file documentation). Returns True on success
         and False on failure, printing the unacceptable metrics. """
 
@@ -154,11 +154,7 @@ def run_recipe(fixed: Dict[str, Any],
     results = d5.test_training(executor, train_sampler, validation_sampler,
                                optimizer, comps['epochs'], batch, output_node,
                                metrics=[m[0] for m in metrics],
-                               events=comps['events'])
-    if save_stats:
-        import pickle
-        with open(stats_path + '/recipe_stats_run_0', 'wb') as fp:
-            pickle.dump(results, fp)
+                               events=comps['events'], stats_path=stats_path)
 
     # Verify results
     ok = True

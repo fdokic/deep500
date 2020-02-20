@@ -12,7 +12,7 @@ def test_training(executor: GraphExecutor, training_set: SamplerOrDataset,
                   epochs: int, batch_size: int, output_node: Optional[str] = None,
                   metrics: List[TestMetric] = DefaultTrainingMetrics(),
                   events: List[TrainingEvent] = None,
-                  trainer: Optional[Trainer] = None) -> List[Any]:
+                  trainer: Optional[Trainer] = None, stats_path='', save_stats=True) -> List[Any]:
     """ Tests training for a given number of epochs and reports metrics.
         @param executor The graph executor to run.
         @param training_set The training set sampler or dataset to use. 
@@ -74,6 +74,11 @@ def test_training(executor: GraphExecutor, training_set: SamplerOrDataset,
             metric.begin(input)
             outputs = trainer.run_loop(epochs, events)
             metric.end(outputs)
+
+    if save_stats:
+        import pickle
+        with open(stats_path, 'wb') as fp:
+            pickle.dump(outputs, fp)
 
     # Execute metrics
     results = []
