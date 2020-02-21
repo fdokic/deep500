@@ -154,7 +154,7 @@ def run_recipe(fixed: Dict[str, Any],
     results = d5.test_training(executor, train_sampler, validation_sampler,
                                optimizer, comps['epochs'], batch, output_node,
                                metrics=[m[0] for m in metrics],
-                               events=comps['events'], stats_path=stats_path, export=save_detailed)
+                               events=comps['events'], stats_path=stats_path, save_stats=save_detailed)
 
     if not save_detailed:
         import pickle
