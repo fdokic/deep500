@@ -47,13 +47,11 @@ class ResNetLSTM(ResNet):
         self.fc = nn.Linear(lstm_hidden_size, num_classes)
 
     def forward(self, x):
-        embed_seq = []
-        for t in range(x.size(1)):
-            embed_seq.append(self.features(x[:,t,:,:,:]))
-        embed_seq = torch.stack(embed_seq, dim=0)
-
-        # embed_seq = self.features(x)
-        out, _ = self.lstm(embed_seq)
+        batch_size, timesteps, C, H, W = x.size()
+        res_in = x.view(batch_size * timesteps, C, H, W)
+        res_out = self.features(res_in)
+        lstm_in = res_out.view(batch_size, timesteps, -1)
+        out, _ = self.lstm(lstm_in)
         out = out.clone().transpose_(0, 1) #batch first
         out = self.fc(out.contiguous().view(-1, self.lstm_hidden_size))
         out = out.view(x.size(0), x.size(1), -1).mean(1)
@@ -79,7 +77,7 @@ def ResNet101LSTM(num_classes=101, pretrained=True):
     return _resnetlstm('resnet101',  pretrained=pretrained,
                        block=Bottleneck, layers=[3, 4, 23, 3], num_classes=num_classes)
 
-def export_50(file_path:str = 'resnet_lstm.onnx', shape=(3, 32, 32), batch_size=1, sequence_length=1):
+def export_50(file_path:str = 'resnet_lstm.onnx', shape=(3, 32, 32), batch_size=5, sequence_length=7):
     net = ResNet50LSTM()
     dummy_input = Variable(torch.zeros((batch_size, sequence_length, *shape)))
 

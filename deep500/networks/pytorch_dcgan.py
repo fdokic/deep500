@@ -115,6 +115,12 @@ def export_dcgan(nz=100, ngf=64, nc=3, ndf=64, b_size=128, shape=(3, 64, 64), fi
     input = (dummy_input, dummy_noise)
     torch.onnx.export(model, input, file_path, verbose=False,
                       training=True)
+    import onnx
+    import deep500.tools.input_completion as completion
+    model = onnx.load(file_path)
+    model = completion.complete_inputs(model)
+    onnx.save(model, file_path)
+
     return file_path
 
 def export_train_dcgan(nz=100, ngf=64, nc=3, ndf=64, b_size=128, shape=(3, 64, 64), file_path='DCGan.onnx') -> str:
