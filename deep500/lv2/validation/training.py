@@ -75,10 +75,32 @@ def test_training(executor: GraphExecutor, training_set: SamplerOrDataset,
             outputs = trainer.run_loop(epochs, events)
             metric.end(outputs)
 
+    import deep500.lv2.summaries as d5s
+
+    def clean_epoch(epoch):
+        res = {}
+        for k, v in epoch.__dict__.items():
+            if k == 'wrong_batch' or k == 'losses':
+                continue
+            else:
+                res[k] = v
+        return res
+
     if save_stats:
+        res = {}
+        for k, v in outputs.__dict__.items():
+            if isinstance(v, list):
+                ls = []
+                for i in v:
+                    if isinstance(i, d5s.EpochSummary):
+                        ls.append(clean_epoch(i))
+                res[k] = ls
+            if isinstance(v, d5s.EpochSummary):
+                res[k] = clean_epoch(v)
+
         import pickle
         with open(stats_path, 'wb') as fp:
-            pickle.dump(outputs, fp)
+            pickle.dump(res, fp)
 
     # Execute metrics
     results = []
